@@ -1,0 +1,28 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Test Bitquery Engine",
+			"type": "shell",
+			"command": "/Users/basar/bitquerydatas/.venv/bin/python",
+			"args": [
+				"-m",
+				"unittest",
+				"discover",
+				"-s",
+				"tests",
+				"-p",
+				"test_*.py"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Test Bitquery Engine (quoted)",
+			"type": "shell",
+			"command": "/Users/basar/bitquerydatas/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'",
+			"isBackground": false,
+			"group": "test"
+		}
+	]
+}
