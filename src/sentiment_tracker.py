@@ -1,83 +1,127 @@
-import os
+"""Periodic crypto sentiment tracker using the Tavily search API."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
 import time
+from typing import Any
+
 import requests
 import schedule
 
-# The 5 tokens we are tracking for market sentiment
-TOKENS = [
+from config import settings
+from sinks.base import BaseSink
+from sinks.jsonl_sink import JsonlFileSink
+
+LOGGER = logging.getLogger("sentiment_tracker")
+
+TOKENS: list[dict[str, str]] = [
     {"name": "Bitcoin", "symbol": "BTC"},
     {"name": "Ethereum", "symbol": "ETH"},
     {"name": "Solana", "symbol": "SOL"},
     {"name": "BNB", "symbol": "BNB"},
-    {"name": "Avalanche", "symbol": "AVAX"}
+    {"name": "Avalanche", "symbol": "AVAX"},
 ]
 
-TAVILY_API_URL = "https://api.tavily.com/search"
+OUTPUT_DIR = settings.DATA_DIR / "sentiment"
 
-def fetch_crypto_sentiment():
-    """
-    Constructs and sends a focused query to the Tavily API for each token.
-    Runs for all 5 tokens per cycle (Total cost: 10 credits).
-    """
-    # Fetch the API key from the environment variables securely
-    api_key = "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"
-    if not api_key:
-        print("Error: TAVILY_API_KEY environment variable is missing.")
+
+def build_query(token_name: str, token_symbol: str) -> str:
+    return (
+        f"{token_name} {token_symbol} latest news OR market sentiment OR "
+        f"breaking OR price moving events OR FUD OR FOMO"
+    )
+
+
+def _request_with_retry(payload: dict[str, Any]) -> requests.Response:
+    last_error: Exception | None = None
+    for attempt in range(settings.SENTIMENT_MAX_RETRIES + 1):
+        try:
+            response = requests.post(
+                settings.TAVILY_API_URL, json=payload, timeout=settings.SENTIMENT_TIMEOUT_S
+            )
+            if response.status_code == 429:
+                wait_seconds = min(30, 2**attempt)
+                LOGGER.warning("tavily_rate_limited wait_s=%s attempt=%s", wait_seconds, attempt + 1)
+                time.sleep(wait_seconds)
+                continue
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt >= settings.SENTIMENT_MAX_RETRIES:
+                break
+            wait_seconds = min(20, 2**attempt)
+            LOGGER.warning("tavily_retry wait_s=%s attempt=%s error=%s", wait_seconds, attempt + 1, exc)
+            time.sleep(wait_seconds)
+
+    raise RuntimeError(f"Tavily request failed after retries: {last_error}")
+
+
+def fetch_token_sentiment(token: dict[str, str]) -> dict[str, Any] | None:
+    payload = {
+        "api_key": settings.TAVILY_API_KEY,
+        "query": build_query(token["name"], token["symbol"]),
+        "topic": "news",
+        "search_depth": settings.SENTIMENT_SEARCH_DEPTH,
+        "include_answer": settings.SENTIMENT_INCLUDE_ANSWER,
+        "include_images": settings.SENTIMENT_INCLUDE_IMAGES,
+    }
+
+    try:
+        response = _request_with_retry(payload)
+        data = response.json()
+    except Exception as exc:
+        LOGGER.error("tavily_fetch_failed token=%s error=%s", token["symbol"], exc)
+        return None
+
+    return {
+        "event_type": "sentiment",
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "token": token["symbol"],
+        "query": payload["query"],
+        "answer": data.get("answer"),
+        "results": data.get("results", []),
+        "response_time": data.get("response_time"),
+    }
+
+
+def _append_sentiment(sink: BaseSink, record: dict[str, Any]) -> None:
+    asyncio.run(sink.write("sentiment", record))
+
+
+def _fetch_crypto_sentiment_cycle(sink: BaseSink) -> None:
+    if not settings.TAVILY_API_KEY:
+        LOGGER.error("missing_env_var name=TAVILY_API_KEY")
         return
 
-    print(f"\n--- Starting Sentiment Fetch Cycle at {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
+    selected_tokens = TOKENS[: settings.SENTIMENT_MAX_TOKENS_PER_CYCLE]
+    LOGGER.info("sentiment_cycle_start tokens=%s", [t["symbol"] for t in selected_tokens])
 
-    for token in TOKENS:
-        # Constructing the dynamic query with powerful crypto-specific keywords
-        query_text = (
-            f"{token['name']} {token['symbol']} latest news OR market sentiment OR "
-            f"breaking OR price moving events OR FUD OR FOMO"
-        )
-        
-        # Packing the API parameters per your exact requirements 
-        payload = {
-            "api_key": api_key,
-            "query": query_text,
-            "topic": "news",               # Forces search to focus on fresh news articles
-            "search_depth": "advanced",    # Deeper scan for higher quality (Costs 2 credits)
-            "include_answer": True,        # Returns an AI-generated summary across the results
-            "include_images": False        # Disabled to save bandwidth/unnecessary cost
-        }
-        
-        try:
-            print(f"Fetching data for {token['name']} ({token['symbol']})...")
-            response = requests.post(TAVILY_API_URL, json=payload)
-            response.raise_for_status() # Raise an exception for HTTP errors
-            
-            data = response.json()
-            
-            # Here you would typically pipe this data into your DB or sentiment analyzer.
-            # For demonstration, we'll print the AI summarized answer snippet:
-            answer = data.get("answer", "No summary provided by API.")
-            print(f"Result for {token['symbol']}: {answer[:200]}...\n")
-            
-        except requests.exceptions.RequestException as e:
-            print(f"Request failed for {token['name']}: {e}")
+    for token in selected_tokens:
+        record = fetch_token_sentiment(token)
+        if record is None:
+            continue
+        _append_sentiment(sink, record)
+        LOGGER.info("sentiment_written token=%s", token["symbol"])
 
-# -------------------------------------------------------------
-# Credit Management Scheduler
-# -------------------------------------------------------------
-# Budget limits: 4000 / month
-# Cost per cycle: 5 tokens * 2 credits = 10 credits
-# Max cycles per month: 400 
-# Max cycles per day: ~13 
-# We schedule this to run every 2 hours, resulting in 12 cycles 
-# per day (120 credits/day -> ~3600 credits/month). Very safe!
 
-schedule.every(2).hours.do(fetch_crypto_sentiment)
+def start_sentiment_stream(stop: asyncio.Event) -> None:
+    """Public entry point — blocks until *stop* is set.
 
-if __name__ == "__main__":
-    print("Initializing Crypto Sentiment Tracker...")
-    
-    # Fire off an immediate cycle on boot so we don't have to wait 2 hours initially
-    fetch_crypto_sentiment()
-    
-    # Enter the infinite loop waiting for the next 2-hour window
-    while True:
-        schedule.run_pending()
-        time.sleep(60) # Only wake up once a minute to check the schedule
+    Designed to be called via ``asyncio.to_thread()`` from the
+    orchestrator so that the synchronous schedule loop does not block
+    the event loop.
+    """
+    sink = JsonlFileSink(OUTPUT_DIR)
+
+    _fetch_crypto_sentiment_cycle(sink)
+    schedule.every(settings.SENTIMENT_INTERVAL_MINUTES).minutes.do(_fetch_crypto_sentiment_cycle, sink)
+
+    try:
+        while not stop.is_set():
+            schedule.run_pending()
+            time.sleep(30)
+    finally:
+        asyncio.run(sink.close())

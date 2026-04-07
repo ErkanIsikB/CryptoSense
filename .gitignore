@@ -2,4 +2,5 @@
 __pycache__/
 *.pyc
 .env
-raw_data/*.json
+data/**/*.jsonl
+data/**/*.json

@@ -1,24 +1,68 @@
-# Bitquery V2 Streaming Ingestion Engine
+# CryptoSense — Multi-Source Ingestion Engine
 
-Lightweight Python engine for real-time whale transfer and DEX trade ingestion across BTC, ETH, SOL, BNB, and AVAX, with structured JSON output under `raw_data/`.
+CryptoSense ingests live crypto market data from multiple providers and writes append-only JSONL output for downstream processing.
 
-## What it does
+## What this project does
 
-- Uses GraphQL subscriptions over WebSocket (`Bitquery V2 Streaming API`)
-- Captures:
-  - Whale transfers (`AmountInUSD > WHALE_USD_THRESHOLD`)
-  - DEX trades (with side, protocol, amount, price)
-- Adds `flow_hint` for future inflow/outflow analysis
-- Handles reconnects, exponential backoff, and HTTP `429` retry delays
-- Writes newline-delimited JSON objects into date/token/category files
+It runs four pipelines concurrently:
+
+- Binance aggregate trades (`aggTrade`)
+- Binance orderbook depth (`depth@100ms`)
+- Bitquery V2 GraphQL streaming (whale transfers + DEX trades)
+- Tavily sentiment polling
+
+Each pipeline writes stream records in append mode to files under `data/`.
+
+## Architecture (second-pass refactor)
+
+### 1) Modular pipeline layout
+
+- `src/ingest.py` → Binance trades
+- `src/orderbook_ingest.py` → Binance orderbook
+- `src/bitquery_stream_engine.py` → Bitquery streams
+- `src/sentiment_tracker.py` → Tavily sentiment
+
+### 2) Unified sink abstraction (database-ready)
+
+- `sinks/base.py` defines `BaseSink`
+- `sinks/jsonl_sink.py` provides `JsonlFileSink`
+
+All pipelines write through this sink contract, so a future database sink can be added without changing source-specific ingestion logic.
+
+### 3) Flexible orchestrator
+
+`main.py` uses a pipeline registry (`PIPELINES`) instead of hardcoded launch logic. Adding a new source means:
+
+1. Create a new `start_*_stream` module in `src/`
+2. Register one entry in `PIPELINES`
 
 ## Project structure
 
-- `main.py` — executable entrypoint
-- `src/bitquery_stream_engine.py` — ingestion engine
-- `raw_data/` — output folder
-- `.env.example` — required environment variables
-- `tests/test_engine_utils.py` — small sanity tests
+```text
+.
+├── main.py
+├── config/
+│   └── settings.py
+├── sinks/
+│   ├── base.py
+│   └── jsonl_sink.py
+├── src/
+│   ├── ingest.py
+│   ├── orderbook_ingest.py
+│   ├── bitquery_stream_engine.py
+│   └── sentiment_tracker.py
+├── utils/
+│   ├── logging.py
+│   └── signals.py
+├── data/
+│   ├── trades/
+│   ├── orderbook/
+│   ├── bitquery/
+│   └── sentiment/
+├── tests/
+│   └── test_engine_utils.py
+└── requirements.txt
+```
 
 ## Setup
 
@@ -29,7 +73,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Update `.env` and set `BITQUERY_API_KEY`.
+Update `.env` with valid API keys.
 
 ## Run
 
@@ -37,39 +81,40 @@ Update `.env` and set `BITQUERY_API_KEY`.
 python main.py
 ```
 
-## Low-credit mode (recommended)
+Stop with `Ctrl+C` (graceful shutdown is handled).
 
-Use conservative settings in `.env`:
+## Output behavior
 
-- `WHALE_USD_THRESHOLD=1500000`
-- `TRADE_MIN_USD=100000`
-- `BACKFILL_MINUTES=0`
-- `ENABLED_TOKENS=ETH,SOL`
-- `ENABLED_CATEGORIES=transfers`
-- `MAX_ACTIVE_STREAMS=2`
+- Output files are stable and append-only (`*.jsonl`)
+- Existing files are reused between runs
+- No per-run file recreation logic
 
-When you want broader coverage, increase gradually (for example add `BTC` first, then `trades`).
+Current file pattern:
 
-## Output format
+- `data/trades/<symbol>.jsonl`
+- `data/orderbook/<symbol>.jsonl`
+- `data/bitquery/<TOKEN>_<category>.jsonl`
+- `data/sentiment/sentiment.jsonl`
 
-Files are created in this shape:
+## Future database integration
 
-- `raw_data/2026-03-31_ETH_transfers.json`
-- `raw_data/2026-03-31_ETH_trades.json`
+To add a database writer later:
 
-Each line is a standalone JSON object for easy downstream delivery.
+1. Implement `BaseSink` in a new file (example: `sinks/postgres_sink.py`)
+2. Keep pipeline logic unchanged
+3. Swap sink construction in pipeline entrypoints (or inject via settings/factory)
 
-## Tiny viewer
+This keeps ingestion, transport, and persistence concerns separated.
 
-Quickly inspect fetched rows from `raw_data/`:
+## Adding a new data source
+
+1. Add a new pipeline module in `src/`
+2. Use `BaseSink` for persistence
+3. Register pipeline in `main.py` `PIPELINES`
+4. Add source-specific settings in `config/settings.py`
+
+## Tests
 
 ```zsh
-/Users/basar/bitquerydatas/.venv/bin/python viewer.py --limit 20
-/Users/basar/bitquerydatas/.venv/bin/python viewer.py --date 2026-03-31 --token ETH --category transfers --limit 10
-/Users/basar/bitquerydatas/.venv/bin/python viewer.py --token SOL --category trades --pretty --limit 5
+python -m unittest discover -s tests -v
 ```
-
-## Notes
-
-- Query field names can vary by Bitquery schema version and chain dataset naming.
-- If your endpoint uses slightly different field names, adjust query blocks in `src/bitquery_stream_engine.py`.
