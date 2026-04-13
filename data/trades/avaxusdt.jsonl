@@ -1,0 +1,14 @@
+{"type":"aggTrade","symbol":"AVAXUSDT","event_time_ms":1775758312896,"trade_time_ms":1775758312742,"price":9.296,"qty":18.0,"aggregate_trade_id":544867117,"is_buyer_maker":false,"volume_1m":18.0}
+{"type":"aggTrade","symbol":"AVAXUSDT","event_time_ms":1775758313328,"trade_time_ms":1775758313174,"price":9.296,"qty":27.0,"aggregate_trade_id":544867118,"is_buyer_maker":false,"volume_1m":45.0}
+{"type":"aggTrade","symbol":"AVAXUSDT","event_time_ms":1775758314056,"trade_time_ms":1775758313902,"price":9.296,"qty":4.0,"aggregate_trade_id":544867119,"is_buyer_maker":false,"volume_1m":49.0}
+{"type":"aggTrade","symbol":"AVAXUSDT","event_time_ms":1775758315750,"trade_time_ms":1775758315707,"price":9.296,"qty":9.0,"aggregate_trade_id":544867120,"is_buyer_maker":false,"volume_1m":58.0}
+{"type":"aggTrade","symbol":"AVAXUSDT","event_time_ms":1775758315901,"trade_time_ms":1775758315744,"price":9.295,"qty":225.0,"aggregate_trade_id":544867121,"is_buyer_maker":true,"volume_1m":283.0}
+{"type":"aggTrade","symbol":"AVAXUSDT","event_time_ms":1775758317072,"trade_time_ms":1775758316987,"price":9.295,"qty":321.0,"aggregate_trade_id":544867122,"is_buyer_maker":false,"volume_1m":604.0}
+{"type":"aggTrade","symbol":"AVAXUSDT","event_time_ms":1775758317223,"trade_time_ms":1775758317069,"price":9.294,"qty":13.0,"aggregate_trade_id":544867123,"is_buyer_maker":true,"volume_1m":617.0}
+{"type":"aggTrade","symbol":"AVAXUSDT","event_time_ms":1775758318050,"trade_time_ms":1775758317894,"price":9.294,"qty":124.0,"aggregate_trade_id":544867124,"is_buyer_maker":true,"volume_1m":741.0}
+{"type":"aggTrade","symbol":"AVAXUSDT","event_time_ms":1775758319848,"trade_time_ms":1775758319695,"price":9.293,"qty":147.0,"aggregate_trade_id":544867125,"is_buyer_maker":true,"volume_1m":888.0}
+{"type":"aggTrade","symbol":"AVAXUSDT","event_time_ms":1775758320953,"trade_time_ms":1775758320799,"price":9.293,"qty":111.0,"aggregate_trade_id":544867126,"is_buyer_maker":true,"volume_1m":999.0}
+{"type":"aggTrade","symbol":"AVAXUSDT","event_time_ms":1775758321041,"trade_time_ms":1775758321018,"price":9.292,"qty":7.0,"aggregate_trade_id":544867127,"is_buyer_maker":true,"volume_1m":1006.0}
+{"type":"aggTrade","symbol":"AVAXUSDT","event_time_ms":1775758321052,"trade_time_ms":1775758321030,"price":9.292,"qty":1.0,"aggregate_trade_id":544867128,"is_buyer_maker":false,"volume_1m":1007.0}
+{"type":"aggTrade","symbol":"AVAXUSDT","event_time_ms":1775758321111,"trade_time_ms":1775758321042,"price":9.291,"qty":58.0,"aggregate_trade_id":544867129,"is_buyer_maker":true,"volume_1m":1065.0}
+{"type":"aggTrade","symbol":"AVAXUSDT","event_time_ms":1775758321260,"trade_time_ms":1775758321109,"price":9.29,"qty":84.0,"aggregate_trade_id":544867130,"is_buyer_maker":true,"volume_1m":1149.0}
