@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any, TextIO
 
-from sinks.base import BaseSink
+from src.sinks.base import BaseSink
 
 
 class JsonlFileSink(BaseSink):

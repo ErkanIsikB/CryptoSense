@@ -13,10 +13,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # ── Project paths ───────────────────────────────────────────────────────
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 
-DATA_DIR = PROJECT_ROOT / "data"
+DATA_DIR = PROJECT_ROOT / "scripts" / "data"
 
 # ── Binance (shared by trade & orderbook streams) ──────────────────────
 BINANCE_SYMBOLS: tuple[str, ...] = tuple(
@@ -28,6 +28,8 @@ BINANCE_SYMBOLS: tuple[str, ...] = tuple(
 BINANCE_MARKET_WS_BASE: str = os.getenv(
     "BINANCE_MARKET_WS_BASE", "wss://fstream.binance.com/market"
 )
+
+BINANCE_REST_BASE: str = os.getenv("BINANCE_REST_BASE", "https://api.binance.com")
 
 BINANCE_WS_BASES: tuple[str, ...] = tuple(
     part.strip().rstrip("/")
@@ -44,15 +46,10 @@ BINANCE_WS_BASES: tuple[str, ...] = tuple(
 
 WS_OPEN_TIMEOUT_S: float = float(os.getenv("WS_OPEN_TIMEOUT_S", "20"))
 
-# ── Bitquery ────────────────────────────────────────────────────────────
-BITQUERY_API_KEY: str = os.getenv("BITQUERY_API_KEY", "").strip()
-BITQUERY_STREAM_URL: str = os.getenv(
-    "BITQUERY_STREAM_URL", "wss://streaming.bitquery.io/graphql"
-).strip()
-WHALE_USD_THRESHOLD: float = float(os.getenv("WHALE_USD_THRESHOLD", "500000"))
-TRADE_MIN_USD: float = float(os.getenv("TRADE_MIN_USD", "10000"))
-BACKFILL_MINUTES: int = int(os.getenv("BACKFILL_MINUTES", "3"))
-MAX_ACTIVE_STREAMS: int = int(os.getenv("MAX_ACTIVE_STREAMS", "0"))
+ORDERBOOK_DEPTH_LIMIT: int = int(os.getenv("ORDERBOOK_DEPTH_LIMIT", "20"))
+ORDERBOOK_POLL_INTERVAL_S: float = float(os.getenv("ORDERBOOK_POLL_INTERVAL_S", "2.0"))
+ORDERBOOK_SYMBOL_PAUSE_S: float = float(os.getenv("ORDERBOOK_SYMBOL_PAUSE_S", "0.15"))
+ORDERBOOK_REST_TIMEOUT_S: float = float(os.getenv("ORDERBOOK_REST_TIMEOUT_S", "10"))
 
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
@@ -75,12 +72,15 @@ ENABLED_CATEGORIES: set[str] = {
     )
 }
 
+# ── Bitquery ──────────────────────────────────────────────────────────
+BITQUERY_API_KEY: str = os.getenv("BITQUERY_API_KEY", "").strip()
+
 # ── Sentiment (Tavily) ─────────────────────────────────────────────────
 TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "").strip()
 TAVILY_API_URL: str = os.getenv("TAVILY_API_URL", "https://api.tavily.com/search")
 SENTIMENT_INTERVAL_MINUTES: int = int(os.getenv("SENTIMENT_INTERVAL_MINUTES", "120"))
-SENTIMENT_SEARCH_DEPTH: str = os.getenv("SENTIMENT_SEARCH_DEPTH", "basic").strip() or "basic"
-SENTIMENT_MAX_TOKENS_PER_CYCLE: int = max(1, int(os.getenv("SENTIMENT_MAX_TOKENS_PER_CYCLE", "2")))
+SENTIMENT_SEARCH_DEPTH: str = os.getenv("SENTIMENT_SEARCH_DEPTH", "advanced").strip() or "advanced"
+SENTIMENT_MAX_TOKENS_PER_CYCLE: int = max(1, int(os.getenv("SENTIMENT_MAX_TOKENS_PER_CYCLE", "5")))
 SENTIMENT_TIMEOUT_S: float = float(os.getenv("SENTIMENT_TIMEOUT_S", "20"))
 SENTIMENT_INCLUDE_ANSWER: bool = (
     os.getenv("SENTIMENT_INCLUDE_ANSWER", "true").strip().lower() in {"1", "true", "yes"}

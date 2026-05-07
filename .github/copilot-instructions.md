@@ -2,13 +2,13 @@
   - Completed: File exists at `.github/copilot-instructions.md`.
 
 - [x] Clarify Project Requirements
-  - Completed: Project type is a Python real-time ingestion engine using Bitquery V2 Streaming API.
+  - Completed: Project type is a Python real-time ingestion engine.
 
 - [x] Scaffold the Project
-  - Completed: Created project structure in `.` with `src/`, `tests/`, `raw_data/`, `.vscode/`, `main.py`, `.env.example`, `requirements.txt`, and `README.md`.
+  - Completed: Created project structure in `.` with `src/`, `raw_data/`, `.vscode/`, `src/main.py`, `.env.example`, `requirements.txt`, and `README.md`.
 
 - [x] Customize the Project
-  - Completed: Implemented multi-chain streaming engine in `src/bitquery_stream_engine.py` for whale transfers and DEX trades with JSON output and retry/reconnect handling.
+  - Completed: Implemented ingestion pipelines and JSON output handling.
 
 - [x] Install Required Extensions
   - Completed: No required extensions were provided by project setup info.
@@ -17,7 +17,7 @@
   - Completed: Created `.venv`, installed dependencies, and passed unit tests.
 
 - [x] Create and Run Task
-  - Completed: Added and ran VS Code test task successfully (`Test Bitquery Engine (quoted)`).
+  - Completed: Added and ran VS Code test task successfully.
 
 - [ ] Launch the Project
   - Pending: Requires user confirmation for debug/launch mode.

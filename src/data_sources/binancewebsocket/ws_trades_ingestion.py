@@ -14,10 +14,10 @@ from typing import Deque
 import websockets
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-from config import settings
-from sinks.base import BaseSink
-from sinks.jsonl_sink import JsonlFileSink
-from utils.logging import emit_status
+from src.core.config import settings
+from src.sinks.base import BaseSink
+from src.sinks.jsonl_sink import JsonlFileSink
+from src.core.utils.logging import emit_status
 
 STREAM_NAME = "aggTrade"
 QUEUE_MAXSIZE = 10_000

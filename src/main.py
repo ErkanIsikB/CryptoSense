@@ -10,14 +10,13 @@ import logging
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from config import settings
-from utils.logging import configure_logging
-from utils.signals import setup_signals
+from src.core.config import settings
+from src.core.utils.logging import configure_logging
+from src.core.utils.signals import setup_signals
 
-from src.ingest import start_trade_stream
-from src.orderbook_ingest import start_orderbook_stream
-from src.sentiment_tracker import start_sentiment_stream
-from src.bitquery_stream_engine import start_bitquery_stream
+from src.data_sources.binancewebsocket.ws_trades_ingestion import start_trade_stream
+from src.data_sources.binancewebsocket.ws_orderbook_ingestion import start_orderbook_stream
+from src.data_sources.tavily.tavily_ingestion import start_sentiment_stream
 
 LOGGER = logging.getLogger("orchestrator")
 
@@ -32,7 +31,6 @@ class Pipeline:
 PIPELINES: tuple[Pipeline, ...] = (
     Pipeline(name="binance_trades", starter=start_trade_stream, is_async=True),
     Pipeline(name="binance_orderbook", starter=start_orderbook_stream, is_async=True),
-    Pipeline(name="bitquery", starter=start_bitquery_stream, is_async=True),
     Pipeline(name="sentiment", starter=start_sentiment_stream, is_async=False),
 )
 

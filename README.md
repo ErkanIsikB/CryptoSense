@@ -4,34 +4,32 @@ CryptoSense ingests live crypto market data from multiple providers and writes a
 
 ## What this project does
 
-It runs four pipelines concurrently:
+It runs three pipelines concurrently:
 
 - Binance aggregate trades (`aggTrade`)
-- Binance orderbook depth (`depth@100ms`)
-- Bitquery V2 GraphQL streaming (whale transfers + DEX trades)
+- Binance orderbook REST snapshots (`/api/v3/depth`, `limit=20`)
 - Tavily sentiment polling
 
-Each pipeline writes stream records in append mode to files under `data/`.
+Each pipeline writes stream records in append mode to files under `scripts/data/`.
 
 ## Architecture (second-pass refactor)
 
 ### 1) Modular pipeline layout
 
-- `src/ingest.py` → Binance trades
-- `src/orderbook_ingest.py` → Binance orderbook
-- `src/bitquery_stream_engine.py` → Bitquery streams
-- `src/sentiment_tracker.py` → Tavily sentiment
+- `src/data_sources/binancewebsocket/ws_trades_ingestion.py` → Binance trades
+- `src/data_sources/binancewebsocket/ws_orderbook_ingestion.py` → Binance orderbook
+- `src/data_sources/tavily/tavily_ingestion.py` → Tavily sentiment
 
 ### 2) Unified sink abstraction (database-ready)
 
-- `sinks/base.py` defines `BaseSink`
-- `sinks/jsonl_sink.py` provides `JsonlFileSink`
+- `src/sinks/base.py` defines `BaseSink`
+- `src/sinks/jsonl_sink.py` provides `JsonlFileSink`
 
 All pipelines write through this sink contract, so a future database sink can be added without changing source-specific ingestion logic.
 
 ### 3) Flexible orchestrator
 
-`main.py` uses a pipeline registry (`PIPELINES`) instead of hardcoded launch logic. Adding a new source means:
+`src/main.py` uses a pipeline registry (`PIPELINES`) instead of hardcoded launch logic. Adding a new source means:
 
 1. Create a new `start_*_stream` module in `src/`
 2. Register one entry in `PIPELINES`
@@ -40,27 +38,31 @@ All pipelines write through this sink contract, so a future database sink can be
 
 ```text
 .
-├── main.py
-├── config/
-│   └── settings.py
-├── sinks/
-│   ├── base.py
-│   └── jsonl_sink.py
+├── scripts/
+│   ├── sinks/
+│   │   ├── base.py
+│   │   └── jsonl_sink.py
+│   └── data/
+│       ├── trades/
+│       ├── orderbook/
+│       └── sentiment/
 ├── src/
-│   ├── ingest.py
-│   ├── orderbook_ingest.py
-│   ├── bitquery_stream_engine.py
-│   └── sentiment_tracker.py
-├── utils/
-│   ├── logging.py
-│   └── signals.py
-├── data/
-│   ├── trades/
-│   ├── orderbook/
-│   ├── bitquery/
-│   └── sentiment/
-├── tests/
-│   └── test_engine_utils.py
+│   ├── main.py
+│   ├── core/
+│   │   ├── config/
+│   │   │   └── settings.py
+│   │   └── utils/
+│   │       ├── logging.py
+│   │       └── signals.py
+│   ├── data_sources/
+│   │   ├── binancewebsocket/
+│   │   │   ├── ws_trades_ingestion.py
+│   │   │   └── ws_orderbook_ingestion.py
+│   │   └── tavily/
+│   │       └── tavily_ingestion.py
+│   └── sinks/
+│       ├── base.py
+│       └── jsonl_sink.py
 └── requirements.txt
 ```
 
@@ -78,7 +80,7 @@ Update `.env` with valid API keys.
 ## Run
 
 ```zsh
-python main.py
+python -m src.main
 ```
 
 Stop with `Ctrl+C` (graceful shutdown is handled).
@@ -91,16 +93,15 @@ Stop with `Ctrl+C` (graceful shutdown is handled).
 
 Current file pattern:
 
-- `data/trades/<symbol>.jsonl`
-- `data/orderbook/<symbol>.jsonl`
-- `data/bitquery/<TOKEN>_<category>.jsonl`
-- `data/sentiment/sentiment.jsonl`
+- `scripts/data/trades/<symbol>.jsonl`
+- `scripts/data/orderbook/<symbol>.jsonl`
+- `scripts/data/sentiment/sentiment.jsonl`
 
 ## Future database integration
 
 To add a database writer later:
 
-1. Implement `BaseSink` in a new file (example: `sinks/postgres_sink.py`)
+1. Implement `BaseSink` in a new file (example: `src/sinks/postgres_sink.py`)
 2. Keep pipeline logic unchanged
 3. Swap sink construction in pipeline entrypoints (or inject via settings/factory)
 
@@ -110,11 +111,9 @@ This keeps ingestion, transport, and persistence concerns separated.
 
 1. Add a new pipeline module in `src/`
 2. Use `BaseSink` for persistence
-3. Register pipeline in `main.py` `PIPELINES`
-4. Add source-specific settings in `config/settings.py`
+3. Register pipeline in `src/main.py` `PIPELINES`
+4. Add source-specific settings in `src/core/config/settings.py`
 
 ## Tests
 
-```zsh
-python -m unittest discover -s tests -v
-```
+No test suite is currently included.
