@@ -176,11 +176,22 @@ async def _aggregator(
             queue.task_done()
 
 
-async def start_trade_stream(stop: asyncio.Event) -> None:
-    """Public entry point — run the Binance aggregate-trade pipeline."""
+async def start_trade_stream(stop: asyncio.Event, sink: BaseSink | None = None) -> None:
+    """Public entry point — run the Binance aggregate-trade pipeline.
+
+    Parameters
+    ----------
+    stop : asyncio.Event
+        Set to signal shutdown.
+    sink : BaseSink | None
+        If provided, records are written to this sink (e.g. TimescaleSink).
+        Falls back to a local JSONL file sink when ``None``.
+    """
     symbols = settings.BINANCE_SYMBOLS
     queue: asyncio.Queue[TradeEvent] = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
-    sink = JsonlFileSink(OUTPUT_DIR)
+    owns_sink = sink is None
+    if sink is None:
+        sink = JsonlFileSink(OUTPUT_DIR)
 
     listener_task = asyncio.create_task(_listen(symbols, queue, stop))
     aggregator_task = asyncio.create_task(_aggregator(queue, stop, sink))
@@ -193,4 +204,5 @@ async def start_trade_stream(stop: asyncio.Event) -> None:
         await queue.join()
         aggregator_task.cancel()
         await asyncio.gather(aggregator_task, return_exceptions=True)
-        await sink.close()
+        if owns_sink:
+            await sink.close()

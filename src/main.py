@@ -1,6 +1,7 @@
 """CryptoSense — unified data-ingestion orchestrator.
 
-Starts all four pipelines concurrently and handles graceful shutdown.
+Starts all pipelines concurrently and handles graceful shutdown.
+Data flows through feature engineering aggregators into TimescaleDB.
 """
 
 from __future__ import annotations
@@ -16,7 +17,11 @@ from src.core.utils.signals import setup_signals
 
 from src.data_sources.binancewebsocket.ws_trades_ingestion import start_trade_stream
 from src.data_sources.binancewebsocket.ws_orderbook_ingestion import start_orderbook_stream
-from src.data_sources.tavily.tavily_ingestion import start_sentiment_stream
+from src.data_sources.xquik.xquik_ingestion import start_xquik_sentiment_stream
+from src.data_sources.bitquery.cex_flow_ingestion import start_cex_flow_stream
+
+from src.sinks.timescale_sink import TimescaleSink
+from src.db.db import run_migration, close_pool
 
 LOGGER = logging.getLogger("orchestrator")
 
@@ -24,15 +29,8 @@ LOGGER = logging.getLogger("orchestrator")
 @dataclass(frozen=True)
 class Pipeline:
     name: str
-    starter: Callable[[asyncio.Event], Awaitable[None]] | Callable[[asyncio.Event], None]
+    starter: Callable[..., Awaitable[None]] | Callable[..., None]
     is_async: bool = True
-
-
-PIPELINES: tuple[Pipeline, ...] = (
-    Pipeline(name="binance_trades", starter=start_trade_stream, is_async=True),
-    Pipeline(name="binance_orderbook", starter=start_orderbook_stream, is_async=True),
-    Pipeline(name="sentiment", starter=start_sentiment_stream, is_async=False),
-)
 
 
 async def _run_all() -> None:
@@ -41,15 +39,57 @@ async def _run_all() -> None:
     stop = asyncio.Event()
     setup_signals(stop)
 
+    # ── Database setup ──────────────────────────────────────────
+    if settings.DB_URL:
+        try:
+            LOGGER.info("running TimescaleDB schema migration")
+            run_migration()
+            LOGGER.info("schema migration completed")
+        except Exception:
+            LOGGER.exception("schema migration failed — DB writes will fail")
+    else:
+        LOGGER.warning("DB_URL not set — data will only be written to JSONL files")
+
+    # ── Create shared TimescaleDB sink ──────────────────────────
+    timescale_sink = TimescaleSink() if settings.DB_URL else None
+
     LOGGER.info("starting all ingestion pipelines")
 
     tasks: list[asyncio.Task[object]] = []
-    for pipeline in PIPELINES:
-        if pipeline.is_async:
-            task = asyncio.create_task(pipeline.starter(stop), name=pipeline.name)
-        else:
-            task = asyncio.create_task(asyncio.to_thread(pipeline.starter, stop), name=pipeline.name)
-        tasks.append(task)
+
+    # 1. Binance Trades — uses TimescaleSink for 5-min OHLCV aggregation
+    trade_task = asyncio.create_task(
+        start_trade_stream(stop, sink=timescale_sink),
+        name="binance_trades",
+    )
+    tasks.append(trade_task)
+
+    # 2. Binance Orderbook — uses TimescaleSink for 5-min metric aggregation
+    orderbook_task = asyncio.create_task(
+        start_orderbook_stream(stop, sink=timescale_sink),
+        name="binance_orderbook",
+    )
+    tasks.append(orderbook_task)
+
+    # 3. XQuik Tweet Sentiment — keyword monitors + FinBERT scoring
+    if settings.XQUIK_API:
+        xquik_task = asyncio.create_task(
+            start_xquik_sentiment_stream(stop),
+            name="xquik_sentiment",
+        )
+        tasks.append(xquik_task)
+    else:
+        LOGGER.warning("XQUIK_API not set — tweet sentiment pipeline disabled")
+
+    # 4. CEX Flows — Bitquery HTTP polling every 5 minutes
+    if settings.BITQUERY_API_KEY:
+        cex_task = asyncio.create_task(
+            start_cex_flow_stream(stop),
+            name="cex_flows",
+        )
+        tasks.append(cex_task)
+    else:
+        LOGGER.warning("BITQUERY_API_KEY not set — CEX flow pipeline disabled")
 
     try:
         await stop.wait()
@@ -59,6 +99,15 @@ async def _run_all() -> None:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Flush remaining aggregated data to DB
+        if timescale_sink is not None:
+            await timescale_sink.close()
+
+        # Close DB connection pool
+        if settings.DB_URL:
+            close_pool()
+
         LOGGER.info("all pipelines stopped")
 
 

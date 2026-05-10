@@ -17,6 +17,7 @@ import schedule
 from src.core.config import settings
 from src.sinks.base import BaseSink
 from src.sinks.jsonl_sink import JsonlFileSink
+from src.feature_engineering.sentiment_scorer import score_and_store as _score_and_store_to_db
 
 LOGGER = logging.getLogger("sentiment_tracker")
 
@@ -372,6 +373,11 @@ def fetch_token_sentiment(
 
 def _append_sentiment(sink: BaseSink, record: dict[str, Any]) -> None:
     asyncio.run(sink.write("sentiment", record))
+    # Also score and write to TimescaleDB
+    try:
+        _score_and_store_to_db(record)
+    except Exception as exc:
+        LOGGER.warning("sentiment_db_write_failed error=%s", exc)
 
 
 def _fetch_crypto_sentiment_cycle(sink: BaseSink) -> None:
@@ -440,22 +446,31 @@ def _fetch_crypto_sentiment_cycle(sink: BaseSink) -> None:
             }
         )
 
-def start_sentiment_stream(stop: asyncio.Event) -> None:
-    """Public entry point — blocks until *stop* is set."""
-    sink = JsonlFileSink(OUTPUT_DIR)
+def start_sentiment_stream(stop: asyncio.Event, sink: BaseSink | None = None) -> None:
+    """Public entry point — blocks until *stop* is set.
+
+    Parameters
+    ----------
+    stop : asyncio.Event
+        Set to signal shutdown.
+    sink : BaseSink | None
+        If provided, records are also written to this sink.
+        A JSONL file sink is always used for state persistence.
+    """
+    jsonl_sink = JsonlFileSink(OUTPUT_DIR)
 
     # Uygulama başlarken ilk döngüyü çalıştır
-    _fetch_crypto_sentiment_cycle(sink)
+    _fetch_crypto_sentiment_cycle(jsonl_sink)
     
     # Config dosyasındaki dakikaya göre çalıştır
-    schedule.every(settings.SENTIMENT_INTERVAL_MINUTES).minutes.do(_fetch_crypto_sentiment_cycle, sink)
+    schedule.every(settings.SENTIMENT_INTERVAL_MINUTES).minutes.do(_fetch_crypto_sentiment_cycle, jsonl_sink)
 
     try:
         while not stop.is_set():
             schedule.run_pending()
             time.sleep(30)
     finally:
-        asyncio.run(sink.close())
+        asyncio.run(jsonl_sink.close())
 
 if __name__ == "__main__":
     import sys

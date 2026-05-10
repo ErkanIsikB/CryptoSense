@@ -89,3 +89,27 @@ SENTIMENT_INCLUDE_IMAGES: bool = (
     os.getenv("SENTIMENT_INCLUDE_IMAGES", "false").strip().lower() in {"1", "true", "yes"}
 )
 SENTIMENT_MAX_RETRIES: int = max(0, int(os.getenv("SENTIMENT_MAX_RETRIES", "2")))
+
+# ── Database (TimescaleDB) ────────────────────────────────────
+DB_URL: str = os.getenv("DB_URL", "").strip()
+
+# ── XQuik (X/Twitter Sentiment) ──────────────────────────────
+XQUIK_API: str = os.getenv("XQUIK_API", "").strip()
+XQUIK_POLL_INTERVAL_S: int = int(os.getenv("XQUIK_POLL_INTERVAL_S", "300"))
+
+# ── Aggregation ───────────────────────────────────────────────
+AGGREGATION_WINDOW_SECONDS: int = int(os.getenv("AGGREGATION_WINDOW_SECONDS", "300"))
+
+# ── CEX Flow (Bitquery) ──────────────────────────────────────
+CEX_FLOW_POLL_INTERVAL_S: int = int(os.getenv("CEX_FLOW_POLL_INTERVAL_S", "300"))
+CEX_FLOW_NETWORKS: tuple[str, ...] = tuple(
+    part.strip().lower()
+    for part in os.getenv("CEX_FLOW_NETWORKS", "eth,bsc,solana").split(",")
+    if part.strip()
+)
+CEX_FLOW_TIMEOUT_S: float = float(os.getenv("CEX_FLOW_TIMEOUT_S", "30"))
+
+# ── Optional JSONL backup alongside DB writes ────────────────
+ENABLE_JSONL_BACKUP: bool = (
+    os.getenv("ENABLE_JSONL_BACKUP", "false").strip().lower() in {"1", "true", "yes"}
+)
