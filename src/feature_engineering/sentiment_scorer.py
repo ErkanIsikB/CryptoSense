@@ -32,16 +32,19 @@ def _get_pipeline():
         return _pipeline
 
     LOGGER.info("loading FinBERT sentiment model (first use) …")
+    # noinspection PyBroadException
     try:
         from transformers import pipeline as hf_pipeline
 
-        _pipeline = hf_pipeline(
+        _pipeline = hf_pipeline(# type: ignore
             "sentiment-analysis",
             model="ProsusAI/finbert",
             tokenizer="ProsusAI/finbert",
+            revision="refs/pr/29",  # <--- THE MAGIC FIX: Pull from the safe PR branch
             top_k=None,  # return all 3 class probabilities
             truncation=True,
             max_length=512,
+            device=0
         )
         LOGGER.info("FinBERT model loaded successfully")
     except Exception:
@@ -54,23 +57,31 @@ def _get_pipeline():
 # ── Scoring helpers ─────────────────────────────────────────────
 
 
-def _score_text(text: str) -> dict[str, float]:
-    """Return ``{"positive": p, "negative": p, "neutral": p}`` for one text."""
+def score_texts_batched(texts: list[str]) -> list[dict[str, float]]:
+    """Score a whole list of texts at once to maximize GPU efficiency."""
     pipe = _get_pipeline()
-    if pipe is None:
-        return {"positive": 0.0, "negative": 0.0, "neutral": 1.0}
+    if pipe is None or not texts:
+        return [{"positive": 0.0, "negative": 0.0, "neutral": 1.0} for _ in texts]
 
+    # noinspection PyBroadException
     try:
-        result = pipe(text[:512])  # truncate to model max length
-        # result is [[{"label": "positive", "score": 0.9}, ...]]
-        scores = {item["label"]: item["score"] for item in result[0]}
-        return scores
+        truncated = [t[:512] for t in texts]
+        # Handing the whole list to the pipeline silences the warning
+        # and lets the GPU process them in parallel!
+        batch_results = pipe(truncated)
+
+        parsed = []
+        for result in batch_results:
+            # type: ignore to silence PyCharm
+            scores = {item["label"]: float(item["score"]) for item in result}  # type: ignore
+            parsed.append(scores)
+        return parsed
     except Exception:
-        LOGGER.exception("FinBERT inference failed for text: %s…", text[:60])
-        return {"positive": 0.0, "negative": 0.0, "neutral": 1.0}
+        LOGGER.exception("FinBERT batch inference failed")
+        return [{"positive": 0.0, "negative": 0.0, "neutral": 1.0} for _ in texts]
 
 
-def _compound_score(probs: dict[str, float]) -> float:
+def compound_score(probs: dict[str, float]) -> float:
     """Convert 3-class probabilities to a single score in [−1, +1]."""
     return probs.get("positive", 0.0) - probs.get("negative", 0.0)
 
@@ -93,15 +104,7 @@ ON CONFLICT (time, symbol) DO UPDATE SET
 
 
 def score_and_store(record: dict[str, Any]) -> None:
-    """Score a Tavily sentiment record and write to TimescaleDB.
-
-    Parameters
-    ----------
-    record : dict
-        A record dict as built by ``tavily_ingestion.py``, containing at
-        minimum ``token``, ``timestamp``, and ``results`` (list of dicts
-        with ``content``, ``score``, ``title``).
-    """
+    """Score a Tavily sentiment record and write to TimescaleDB."""
     symbol = record.get("token", "UNKNOWN")
     timestamp_str = record.get("timestamp")
     results = record.get("results", [])
@@ -121,7 +124,23 @@ def score_and_store(record: dict[str, Any]) -> None:
     except (ValueError, TypeError):
         ts = datetime.now(timezone.utc)
 
-    # Score each article / tweet
+    # 1. Gather all valid text into a single batch
+    valid_items = []
+    texts_to_score = []
+    for item in results:
+        content = str(item.get("content") or "")
+        if content.strip():
+            valid_items.append(item)
+            texts_to_score.append(content)
+
+    if not valid_items:
+        LOGGER.debug("no valid text to score for %s", symbol)
+        return
+
+    # 2. Fire the GPU exactly ONE time for the whole batch
+    batch_scores = score_texts_batched(texts_to_score)
+
+    # 3. Calculate the math
     positive_count = 0
     negative_count = 0
     relevance_sum = 0.0
@@ -129,13 +148,9 @@ def score_and_store(record: dict[str, Any]) -> None:
     top_headline = ""
     top_relevance = 0.0
 
-    for item in results:
-        content = str(item.get("content") or "")
-        if not content.strip():
-            continue
-
-        probs = _score_text(content)
-        compound = _compound_score(probs)
+    # zip() lets us loop through the original items and our new scores side-by-side
+    for item, probs in zip(valid_items, batch_scores):
+        compound = compound_score(probs)
         compound_sum += compound
 
         if compound > 0.1:
@@ -151,7 +166,7 @@ def score_and_store(record: dict[str, Any]) -> None:
             top_relevance = relevance
             top_headline = title
 
-    n = len(results)
+    n = len(valid_items)
     avg_compound = compound_sum / n if n > 0 else 0.0
     positive_ratio = positive_count / n if n > 0 else 0.0
     negative_ratio = negative_count / n if n > 0 else 0.0
@@ -168,6 +183,7 @@ def score_and_store(record: dict[str, Any]) -> None:
         top_headline[:500] if top_headline else None,
     )
 
+    # noinspection PyBroadException
     try:
         execute_query(INSERT_SQL, row)
         LOGGER.info(

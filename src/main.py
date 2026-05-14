@@ -20,6 +20,8 @@ from src.data_sources.binancewebsocket.ws_orderbook_ingestion import start_order
 from src.data_sources.xquik.xquik_ingestion import start_xquik_sentiment_stream
 from src.data_sources.bitquery.cex_flow_ingestion import start_cex_flow_stream
 
+from src.models.anomaly_pipeline import start_anomaly_stream
+
 from src.sinks.timescale_sink import TimescaleSink
 from src.db.db import run_migration, close_pool
 
@@ -41,6 +43,7 @@ async def _run_all() -> None:
 
     # ── Database setup ──────────────────────────────────────────
     if settings.DB_URL:
+        # noinspection PyBroadException
         try:
             LOGGER.info("running TimescaleDB schema migration")
             run_migration()
@@ -90,6 +93,16 @@ async def _run_all() -> None:
         tasks.append(cex_task)
     else:
         LOGGER.warning("BITQUERY_API_KEY not set — CEX flow pipeline disabled")
+
+    # 5. AI Anomaly Engine — Runs inference every 5 mins from DB (NEW)
+    #if settings.DB_URL:
+    #    anomaly_task = asyncio.create_task(
+    #        start_anomaly_stream(stop),
+    #        name="anomaly_engine",
+    #    )
+    #    tasks.append(anomaly_task)
+    #else:
+    #    LOGGER.warning("DB_URL not set — anomaly engine disabled")
 
     try:
         await stop.wait()

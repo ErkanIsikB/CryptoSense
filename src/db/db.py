@@ -23,8 +23,6 @@ import logging
 import threading
 from contextlib import contextmanager
 from typing import Any, Iterator, Sequence
-
-import psycopg2
 from psycopg2 import pool as pg_pool
 from psycopg2.extras import execute_batch as _pg_execute_batch
 

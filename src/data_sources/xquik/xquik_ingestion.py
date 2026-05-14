@@ -3,7 +3,7 @@
 Flow:
 1. On startup, ensure keyword monitors exist for each tracked coin
 2. Every 5 minutes, poll the events API for new tweets
-3. Score each tweet through FinBERT
+3. Score each tweet through FinBERT (Batched for GPU efficiency)
 4. Feed scored tweets into SentimentAggregator (5-min buckets → TimescaleDB)
 
 Uses the XQuik REST API:
@@ -18,13 +18,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 import httpx
 
 from src.core.config import settings
-from src.feature_engineering.sentiment_scorer import _score_text, _compound_score
+from src.feature_engineering.sentiment_scorer import score_texts_batched, compound_score
 from src.feature_engineering.sentiment_aggregator import SentimentAggregator
 
 LOGGER = logging.getLogger("xquik_ingestion")
@@ -90,11 +90,7 @@ async def _delete_keyword_monitor(client: httpx.AsyncClient, monitor_id: str) ->
 async def _set_monitor_active(
     client: httpx.AsyncClient, monitor_id: str, active: bool
 ) -> None:
-    """Pause or unpause a keyword monitor.
-
-    - ``active=True``  → unpause (resume monitoring, costs credits)
-    - ``active=False`` → pause   (stop monitoring, saves credits)
-    """
+    """Pause or unpause a keyword monitor."""
     resp = await client.patch(
         f"{XQUIK_BASE}/monitors/keywords/{monitor_id}",
         headers=_headers(),
@@ -117,10 +113,7 @@ async def _pause_all_monitors(
 
 
 async def ensure_keyword_monitors(client: httpx.AsyncClient) -> dict[str, str]:
-    """Ensure keyword monitors exist for all tracked coins.
-
-    Returns a mapping of ``{symbol: monitor_id}``.
-    """
+    """Ensure keyword monitors exist for all tracked coins."""
     existing = await _list_keyword_monitors(client)
     existing_queries = {m["query"]: m["id"] for m in existing}
 
@@ -132,7 +125,6 @@ async def ensure_keyword_monitors(client: httpx.AsyncClient) -> dict[str, str]:
             symbol_to_monitor[symbol] = mid
             LOGGER.info("monitor exists: symbol=%s id=%s query=%s", symbol, mid, query)
 
-            # Check if paused and unpause
             for m in existing:
                 if m["id"] == mid and not m.get("isActive", True):
                     try:
@@ -152,9 +144,7 @@ async def ensure_keyword_monitors(client: httpx.AsyncClient) -> dict[str, str]:
                 )
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 409:
-                    # Already exists (race or query variation)
                     LOGGER.info("monitor already exists for %s", symbol)
-                    # Re-fetch to get the ID
                     refreshed = await _list_keyword_monitors(client)
                     for m in refreshed:
                         if m["query"] == query:
@@ -167,7 +157,6 @@ async def ensure_keyword_monitors(client: httpx.AsyncClient) -> dict[str, str]:
                         exc.response.status_code,
                         exc.response.text,
                     )
-            # Small delay to avoid rate limits (10 req/s)
             await asyncio.sleep(0.15)
 
     return symbol_to_monitor
@@ -175,7 +164,6 @@ async def ensure_keyword_monitors(client: httpx.AsyncClient) -> dict[str, str]:
 
 # ── Event polling ───────────────────────────────────────────────
 
-# Track the last seen event ID per monitor to avoid processing duplicates
 _last_event_ids: dict[str, str] = {}
 
 
@@ -184,16 +172,12 @@ async def _poll_events(
     symbol: str,
     monitor_id: str,
 ) -> list[dict[str, Any]]:
-    """Poll new events for a given keyword monitor.
-
-    Returns a list of tweet event dicts.
-    """
+    """Poll new events for a given keyword monitor."""
     params: dict[str, Any] = {
         "keywordMonitorId": monitor_id,
         "limit": 100,
     }
 
-    # Use cursor to get only new events
     last_cursor = _last_event_ids.get(monitor_id)
     if last_cursor:
         params["after"] = last_cursor
@@ -216,7 +200,6 @@ async def _poll_events(
             symbol, len(events), data.get("hasMore"),
         )
 
-        # If there are more pages, keep fetching
         while data.get("hasMore"):
             next_cursor = data.get("nextCursor")
             if not next_cursor:
@@ -236,9 +219,7 @@ async def _poll_events(
                 symbol, len(events), data.get("hasMore"),
             )
 
-        # Update cursor to the latest event
         if all_events:
-            # The nextCursor from the last page
             final_cursor = data.get("nextCursor")
             if final_cursor:
                 _last_event_ids[monitor_id] = final_cursor
@@ -260,15 +241,8 @@ async def _poll_events(
 # ── Scoring & aggregation ───────────────────────────────────────
 
 
-def _score_tweet(text: str) -> float:
-    """Score a single tweet through FinBERT. Returns compound score [-1, +1]."""
-    probs = _score_text(text)
-    return _compound_score(probs)
-
-
 def _parse_event_time(event: dict[str, Any]) -> float:
     """Extract tweet timestamp as Unix epoch seconds."""
-    # Events have 'occurredAt' in ISO format
     occurred_at = event.get("occurredAt", "")
     if occurred_at:
         try:
@@ -277,7 +251,6 @@ def _parse_event_time(event: dict[str, Any]) -> float:
         except (ValueError, TypeError):
             pass
 
-    # Fallback: check data.createdAt
     data = event.get("data", {})
     created_at = data.get("createdAt", "")
     if created_at:
@@ -295,10 +268,7 @@ async def _poll_and_score_cycle(
     symbol_monitors: dict[str, str],
     aggregator: SentimentAggregator,
 ) -> int:
-    """Run one poll-score-aggregate cycle for all symbols.
-
-    Returns total number of tweets scored.
-    """
+    """Run one poll-score-aggregate cycle for all symbols using Batched GPU Inference."""
     total_scored = 0
 
     for symbol, monitor_id in symbol_monitors.items():
@@ -307,26 +277,38 @@ async def _poll_and_score_cycle(
             LOGGER.info("no new tweets for %s", symbol)
             continue
 
-        scored = 0
+        # 1. Filter and gather valid events
+        valid_events = []
+        texts_to_score = []
+
         for event in events:
             data = event.get("data", {})
             text = data.get("text", "")
+
             if not text or not text.strip():
                 continue
-
-            # Skip retweets (they just duplicate text)
             if data.get("isRetweet"):
                 continue
 
-            tweet_time_s = _parse_event_time(event)
-            score = _score_tweet(text)
+            valid_events.append(event)
+            texts_to_score.append(text)
 
-            # Use likes+retweets as engagement metric for sample tweet selection
-            engagement = float(
-                data.get("likeCount", 0) or 0
-            ) + float(
-                data.get("retweetCount", 0) or 0
-            )
+        if not valid_events:
+            continue
+
+        # 2. Fire the GPU exactly ONE time for the whole batch of tweets
+        batch_scores = score_texts_batched(texts_to_score)
+
+        # 3. Aggregate the results
+        scored = 0
+        for event, probs in zip(valid_events, batch_scores):
+            data = event.get("data", {})
+            text = data.get("text", "")
+
+            tweet_time_s = _parse_event_time(event)
+            score = compound_score(probs)
+
+            engagement = float(data.get("likeCount", 0) or 0) + float(data.get("retweetCount", 0) or 0)
 
             aggregator.add(
                 symbol=symbol,
@@ -343,7 +325,6 @@ async def _poll_and_score_cycle(
             )
         total_scored += scored
 
-        # Small delay between symbols to stay within rate limits
         await asyncio.sleep(0.12)
 
     return total_scored
@@ -353,13 +334,7 @@ async def _poll_and_score_cycle(
 
 
 async def start_xquik_sentiment_stream(stop: asyncio.Event) -> None:
-    """Public entry point — runs XQuik keyword monitoring pipeline.
-
-    1. Ensures keyword monitors exist for all tracked coins
-    2. Polls events every 5 minutes
-    3. Scores tweets through FinBERT
-    4. Aggregates into 5-minute buckets → TimescaleDB
-    """
+    """Public entry point — runs XQuik keyword monitoring pipeline."""
     if not settings.XQUIK_API:
         LOGGER.error("XQUIK_API not set — tweet sentiment pipeline disabled")
         return
@@ -372,7 +347,6 @@ async def start_xquik_sentiment_stream(stop: asyncio.Event) -> None:
     )
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        # Step 1: Ensure monitors exist (and unpause if paused)
         try:
             symbol_monitors = await ensure_keyword_monitors(client)
             LOGGER.info(
@@ -387,7 +361,6 @@ async def start_xquik_sentiment_stream(stop: asyncio.Event) -> None:
             LOGGER.error("no keyword monitors could be created — aborting")
             return
 
-        # Step 2: Poll loop
         try:
             while not stop.is_set():
                 try:
@@ -399,18 +372,15 @@ async def start_xquik_sentiment_stream(stop: asyncio.Event) -> None:
                 except Exception:
                     LOGGER.exception("XQuik poll cycle failed")
 
-                # Wait for next cycle or until stopped
                 try:
                     await asyncio.wait_for(
                         stop.wait(), timeout=settings.XQUIK_POLL_INTERVAL_S
                     )
                 except asyncio.TimeoutError:
-                    pass  # normal — poll again
+                    pass
         finally:
-            # Step 3: Pause monitors on shutdown to save credits
             LOGGER.info("pausing all keyword monitors to save credits")
             await _pause_all_monitors(client, symbol_monitors)
 
-    # Flush remaining data on shutdown
     aggregator.flush_all()
     LOGGER.info("XQuik sentiment stream stopped")
