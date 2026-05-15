@@ -2,9 +2,10 @@
 
 Flow:
 1. On startup, ensure keyword monitors exist for each tracked coin
-2. Every 5 minutes, poll the events API for new tweets
-3. Score each tweet through FinBERT (Batched for GPU efficiency)
-4. Feed scored tweets into SentimentAggregator (5-min buckets → TimescaleDB)
+2. Fast-forward cursors to ignore old backlog
+3. Every 5 minutes, poll the events API for strictly new tweets
+4. Score each tweet through FinBERT (Batched for GPU efficiency)
+5. Feed scored tweets into SentimentAggregator (5-min buckets → TimescaleDB)
 
 Uses the XQuik REST API:
 - POST /api/v1/monitors/keywords — create keyword monitor
@@ -164,7 +165,36 @@ async def ensure_keyword_monitors(client: httpx.AsyncClient) -> dict[str, str]:
 
 # ── Event polling ───────────────────────────────────────────────
 
-_last_event_ids: dict[str, str] = {}
+_last_seen_event_id: dict[str, str] = {}
+
+
+async def _fast_forward_cursors(
+    client: httpx.AsyncClient,
+    symbol_monitors: dict[str, str],
+) -> None:
+    """Record the newest event ID for each monitor without processing anything."""
+    for symbol, monitor_id in symbol_monitors.items():
+        try:
+            resp = await client.get(
+                f"{XQUIK_BASE}/events",
+                headers=_headers(),
+                params={"keywordMonitorId": monitor_id, "limit": 1},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            events = data.get("events", [])
+            if events:
+                newest_id = str(events[0].get("id", ""))
+                _last_seen_event_id[monitor_id] = newest_id
+                LOGGER.info(
+                    "fast-forwarded %s: newest event id=%s (will skip all older)",
+                    symbol, newest_id,
+                )
+            else:
+                LOGGER.info("fast-forwarded %s: no events yet", symbol)
+        except Exception:
+            LOGGER.exception("fast-forward failed for %s", symbol)
+        await asyncio.sleep(0.12)
 
 
 async def _poll_events(
@@ -172,17 +202,14 @@ async def _poll_events(
     symbol: str,
     monitor_id: str,
 ) -> list[dict[str, Any]]:
-    """Poll new events for a given keyword monitor."""
+    """Poll strictly new events for a given keyword monitor."""
+    last_seen = _last_seen_event_id.get(monitor_id)
+    new_events: list[dict[str, Any]] = []
+    found_seen = False
     params: dict[str, Any] = {
         "keywordMonitorId": monitor_id,
         "limit": 100,
     }
-
-    last_cursor = _last_event_ids.get(monitor_id)
-    if last_cursor:
-        params["after"] = last_cursor
-
-    all_events: list[dict[str, Any]] = []
 
     try:
         resp = await client.get(
@@ -194,13 +221,22 @@ async def _poll_events(
         data = resp.json()
 
         events = data.get("events", [])
-        all_events.extend(events)
+
+        for evt in events:
+            evt_id = str(evt.get("id", ""))
+            if evt_id == last_seen:
+                found_seen = True
+                break
+            new_events.append(evt)
+
         LOGGER.info(
-            "polled %s: %d events (hasMore=%s)",
-            symbol, len(events), data.get("hasMore"),
+            "polled %s: %d new events from %d fetched (hitSeen=%s, hasMore=%s)",
+            symbol, len(new_events), len(events), found_seen, data.get("hasMore"),
         )
 
-        while data.get("hasMore"):
+        page = 0
+        max_pages = 5
+        while not found_seen and data.get("hasMore") and page < max_pages:
             next_cursor = data.get("nextCursor")
             if not next_cursor:
                 break
@@ -213,16 +249,23 @@ async def _poll_events(
             resp.raise_for_status()
             data = resp.json()
             events = data.get("events", [])
-            all_events.extend(events)
-            LOGGER.info(
-                "polled %s (page): +%d events (hasMore=%s)",
-                symbol, len(events), data.get("hasMore"),
-            )
 
-        if all_events:
-            final_cursor = data.get("nextCursor")
-            if final_cursor:
-                _last_event_ids[monitor_id] = final_cursor
+            for evt in events:
+                evt_id = str(evt.get("id", ""))
+                if evt_id == last_seen:
+                    found_seen = True
+                    break
+                new_events.append(evt)
+
+            LOGGER.info(
+                "polled %s (page %d): +%d events (hitSeen=%s)",
+                symbol, page + 1, len(events), found_seen,
+            )
+            page += 1
+
+        if new_events:
+            newest_id = str(new_events[0].get("id", ""))
+            _last_seen_event_id[monitor_id] = newest_id
 
     except httpx.HTTPStatusError as exc:
         LOGGER.error(
@@ -235,7 +278,8 @@ async def _poll_events(
     except Exception:
         LOGGER.exception("event poll error: symbol=%s", symbol)
 
-    return all_events
+    new_events.reverse()
+    return new_events
 
 
 # ── Scoring & aggregation ───────────────────────────────────────
@@ -277,7 +321,6 @@ async def _poll_and_score_cycle(
             LOGGER.info("no new tweets for %s", symbol)
             continue
 
-        # 1. Filter and gather valid events
         valid_events = []
         texts_to_score = []
 
@@ -296,10 +339,9 @@ async def _poll_and_score_cycle(
         if not valid_events:
             continue
 
-        # 2. Fire the GPU exactly ONE time for the whole batch of tweets
+        # Fire the GPU exactly ONE time for the whole batch
         batch_scores = score_texts_batched(texts_to_score)
 
-        # 3. Aggregate the results
         scored = 0
         for event, probs in zip(valid_events, batch_scores):
             data = event.get("data", {})
@@ -360,6 +402,9 @@ async def start_xquik_sentiment_stream(stop: asyncio.Event) -> None:
         if not symbol_monitors:
             LOGGER.error("no keyword monitors could be created — aborting")
             return
+
+        LOGGER.info("fast-forwarding event cursors to skip old tweets")
+        await _fast_forward_cursors(client, symbol_monitors)
 
         try:
             while not stop.is_set():

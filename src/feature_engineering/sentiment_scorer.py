@@ -22,7 +22,7 @@ from transformers.pipelines.pt_utils import KeyDataset
 
 LOGGER = logging.getLogger("sentiment_scorer")
 
-# ── Lazy model loading ──────────────────────────────────────────
+# ── Lazy model loading ─────────────────────────────────────────
 
 _pipeline = None
 
@@ -56,7 +56,7 @@ def _get_pipeline():
     return _pipeline
 
 
-# ── Scoring helpers ─────────────────────────────────────────────
+# ── Scoring helpers ────────────────────────────────────────────
 
 
 def score_texts_batched(texts: list[str]) -> list[dict[str, float]]:
@@ -93,7 +93,7 @@ def compound_score(probs: dict[str, float]) -> float:
     return probs.get("positive", 0.0) - probs.get("negative", 0.0)
 
 
-# ── Public API ──────────────────────────────────────────────────
+# ── Public API ─────────────────────────────────────────────────
 
 INSERT_SQL = """
 INSERT INTO sentiment_scores
