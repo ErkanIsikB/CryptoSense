@@ -1,9 +1,18 @@
-pandas
-websockets>=12.0
-python-dotenv>=1.0.1
-requests
-schedule
-psycopg2-binary>=2.9
-transformers>=4.40
-torch
-httpx
+# --- PyTorch GPU Engines (CUDA 12.1) ---
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1
+
+# --- Machine Learning & Data Processing ---
+transformers==5.8.1
+datasets==4.8.5
+pandas==3.0.3
+
+# --- Asynchronous Networking & APIs ---
+httpx==0.28.1
+requests==2.34.2
+websockets==16.0
+
+# --- Database & Utilities ---
+psycopg2-binary==2.9.12
+python-dotenv==1.2.2
+schedule==1.2.2

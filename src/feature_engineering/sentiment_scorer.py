@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from src.db.db import execute_query
+from datasets import Dataset
+from transformers.pipelines.pt_utils import KeyDataset
 
 LOGGER = logging.getLogger("sentiment_scorer")
 
@@ -58,7 +60,7 @@ def _get_pipeline():
 
 
 def score_texts_batched(texts: list[str]) -> list[dict[str, float]]:
-    """Score a whole list of texts at once to maximize GPU efficiency."""
+    """Score a whole list of texts at once using KeyDataset for maximum GPU efficiency."""
     pipe = _get_pipeline()
     if pipe is None or not texts:
         return [{"positive": 0.0, "negative": 0.0, "neutral": 1.0} for _ in texts]
@@ -66,15 +68,20 @@ def score_texts_batched(texts: list[str]) -> list[dict[str, float]]:
     # noinspection PyBroadException
     try:
         truncated = [t[:512] for t in texts]
-        # Handing the whole list to the pipeline silences the warning
-        # and lets the GPU process them in parallel!
-        batch_results = pipe(truncated)
+
+        # 1. Create the dataset
+        dataset = Dataset.from_dict({"text": truncated})
 
         parsed = []
+
+        # 2. Use KeyDataset to stream batches directly to the VRAM without list conversion
+        batch_results = pipe(KeyDataset(dataset, "text"), batch_size=64)
+
         for result in batch_results:
-            # type: ignore to silence PyCharm
+            # type: ignore
             scores = {item["label"]: float(item["score"]) for item in result}  # type: ignore
             parsed.append(scores)
+
         return parsed
     except Exception:
         LOGGER.exception("FinBERT batch inference failed")
