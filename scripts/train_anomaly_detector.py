@@ -1,115 +1,251 @@
+"""CryptoSense Model Training Script.
+
+Surgically filters clean historical data, reconstructs continuous running blocks
+while honoring downtime gaps, normalizes features via MinMax mapping, and trains
+an unsupervised LSTM Autoencoder to learn baseline market dynamics.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
 import os
-import sys
-import pickle
+from datetime import datetime, timedelta
+from typing import Any, Final
+
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from sklearn.preprocessing import StandardScaler
-
-# Add project root to path so we can import src modules
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from torch.utils.data import DataLoader, TensorDataset
 
 from src.db.db import execute_query_fetch
 from src.models.lstm_autoencoder import LSTMAutoencoder
 
-SYMBOL = "BTCUSDT"
-SEQ_LEN = 12  # 12 buckets * 5 mins = 60 minutes of historical context
+# --- System & Logging Configurations ---
+import sys
 
+# ANSI color code for Purple/Magenta
+PURPLE = "\033[95m"
+RESET = "\033[0m"
 
-def fetch_training_data() -> pd.DataFrame:
-    sql = """
-          SELECT t.bucket, \
-                 t.close, \
-                 t.volume, \
-                 t.vwap, \
-                 o.avg_spread, \
-                 o.avg_imbalance, \
-                 COALESCE(s.avg_score, 0)    as avg_score, \
-                 COALESCE(s.tweet_count, 0)  as tweet_count, \
-                 COALESCE(c.net_flow_usd, 0) as net_flow_usd
-          FROM trade_candles_5m t
-                   LEFT JOIN orderbook_snapshots_5m o
-                             ON t.bucket = o.bucket AND t.symbol = o.symbol
-                   LEFT JOIN tweet_sentiment_5m s
-                             ON t.bucket = s.bucket AND REPLACE(t.symbol, 'USDT', '') = s.symbol
-                   LEFT JOIN (SELECT bucket, symbol, SUM(net_flow_usd) as net_flow_usd \
-                              FROM cex_flows_5m \
-                              GROUP BY bucket, symbol) c \
-                             ON t.bucket = c.bucket AND REPLACE(t.symbol, 'USDT', '') = c.symbol
-          WHERE t.symbol = %s
-          ORDER BY t.bucket ASC \
-          """
-    rows = execute_query_fetch(sql, (SYMBOL,))
+# Custom formatter to inject color
+class PurpleFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return f"{PURPLE}{super().format(record)}{RESET}"
+
+# Configure logging to use stdout instead of stderr
+logger = logging.getLogger("model_training")
+logger.setLevel(logging.INFO)
+
+# Remove default handlers if they exist
+if logger.hasHandlers():
+    logger.handlers.clear()
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(PurpleFormatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
+logger.addHandler(handler)
+
+# Keep the module-level LOGGER variable
+LOGGER = logger
+
+# --- Constants & Tuning Hyperparameters ---
+TARGET_SYMBOL: Final[str] = "BTC"
+SEQUENCE_LENGTH: Final[int] = 12  # 12 rows = Exactly 60 minutes
+BUCKET_DELTA_MINUTES: Final[int] = 5
+EPOCHS: Final[int] = 100
+BATCH_SIZE: Final[int] = 32
+LEARNING_RATE: Final[float] = 0.001
+LATENT_DIM: Final[int] = 10
+
+# Dynamically calculate the absolute path to the main project folder
+PROJECT_ROOT: Final[str] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Model & Parameter Save Coordinates
+MODEL_DIR: Final[str] = os.path.join(PROJECT_ROOT, "src", "models", "saved_weights")
+os.makedirs(MODEL_DIR, exist_ok=True)
+MODEL_SAVE_PATH: Final[str] = os.path.join(MODEL_DIR, f"lstm_autoencoder_{TARGET_SYMBOL.lower()}.pt")
+SCALER_SAVE_PATH: Final[str] = os.path.join(MODEL_DIR, f"scaler_params_{TARGET_SYMBOL.lower()}.json")
+
+# --- Structured SQL Query Formulation ---
+SQL_DATA_EXTRACT: Final[str] = """
+SELECT 
+    COALESCE(t.bucket, o.bucket, s.bucket, c.bucket) AS final_bucket,
+    -- Trade Candles Features
+    COALESCE(t.open, 0.0) as open, 
+    COALESCE(t.high, 0.0) as high, 
+    COALESCE(t.low, 0.0) as low, 
+    COALESCE(t.close, 0.0) as close, 
+    COALESCE(t.volume, 0.0) as volume, 
+    COALESCE(t.trade_count, 0) as trade_count, 
+    COALESCE(t.net_trade, 0.0) as net_trade, 
+    COALESCE(t.vwap, 0.0) as vwap,
+    -- Orderbook Features
+    COALESCE(o.avg_spread, 0.0) as avg_spread, 
+    COALESCE(o.avg_mid_price, 0.0) as avg_mid_price, 
+    COALESCE(o.avg_bid_depth, 0.0) as avg_bid_depth, 
+    COALESCE(o.avg_ask_depth, 0.0) as avg_ask_depth, 
+    COALESCE(o.avg_imbalance, 0.0) as avg_imbalance,
+    -- Sentiment Features
+    COALESCE(s.avg_score, 0.0) as avg_score, 
+    COALESCE(s.tweet_count, 0) as tweet_count, 
+    COALESCE(s.positive_count, 0) as positive_count, 
+    COALESCE(s.negative_count, 0) as negative_count,
+    -- Pre-Aggregated Network CEX Flows
+    COALESCE(c.net_flow_usd, 0.0) as net_flow_usd
+FROM trade_candles_5m t
+FULL OUTER JOIN orderbook_snapshots_5m o 
+    ON t.bucket = o.bucket AND t.symbol = o.symbol
+FULL OUTER JOIN tweet_sentiment_5m s 
+    ON COALESCE(t.bucket, o.bucket) = s.bucket AND COALESCE(t.symbol, o.symbol) = s.symbol
+FULL OUTER JOIN (
+    SELECT bucket, symbol, SUM(net_flow_usd) as net_flow_usd 
+    FROM cex_flows_5m 
+    GROUP BY bucket, symbol
+) c 
+    ON COALESCE(t.bucket, o.bucket, s.bucket) = c.bucket 
+    AND COALESCE(t.symbol, o.symbol, s.symbol) = c.symbol
+WHERE COALESCE(t.bucket, o.bucket, s.bucket, c.bucket) >= '2026-05-15 00:25:00+00'
+  AND COALESCE(t.symbol, o.symbol, s.symbol, c.symbol) = %s
+ORDER BY final_bucket ASC;
+"""
+
+# ── Core Engineering Implementation Logic ───────────────────────
+
+def fetch_and_clean_dataframe() -> pd.DataFrame:
+    """Query TimescaleDB, apply UTC localization, and handle column formats."""
+    LOGGER.info("Querying TimescaleDB for clean %s dataset...", TARGET_SYMBOL)
+    raw_rows = execute_query_fetch(SQL_DATA_EXTRACT, (TARGET_SYMBOL,))
+    print(f"SQL gave us these {len(raw_rows[0])} items:", raw_rows[0])
+    if not raw_rows:
+        raise ValueError(f"Zero clean training samples found for {TARGET_SYMBOL} after the cutoff timestamp.")
 
     columns = [
-        'bucket', 'close', 'volume', 'vwap',
-        'avg_spread', 'avg_imbalance', 'avg_score',
-        'tweet_count', 'net_flow_usd'
+        "bucket", "open", "high", "low", "close", "volume", "trade_count", "net_trade", "vwap",
+        "avg_spread", "avg_mid_price", "avg_bid_depth", "avg_ask_depth", "avg_imbalance",
+        "avg_score", "tweet_count", "positive_count", "negative_count", "net_flow_usd"
     ]
-    data = pd.DataFrame(rows, columns=columns)
-    data.set_index('bucket', inplace=True)
-    return data
+
+    df = pd.DataFrame(raw_rows, columns=columns)
+    df["bucket"] = pd.to_datetime(df["bucket"], utc=True)
+    df = df.sort_values("bucket").reset_index(drop=True)
+    LOGGER.info("Extracted %d valid running buckets from DB.", len(df))
+    return df
 
 
-print(f"Fetching historical data for {SYMBOL} from TimescaleDB...")
-df = fetch_training_data()
+def extract_continuous_sequences(df: pd.DataFrame) -> tuple[np.ndarray, dict[str, Any]]:
+    """Segment sequences into uninterrupted 1-hour windows based on temporal proximity."""
+    # Isolate feature arrays away from structural timestamps
+    feature_columns = [col for col in df.columns if col != "bucket"]
 
-if len(df) < SEQ_LEN:
-    print(f"Not enough data in DB. Only found {len(df)} buckets. Keep the orchestrator running!")
-    sys.exit()
+    # Custom Vectorized MinMax Scaler implementation matching Pandas 3.0 behaviors
+    min_vals = df[feature_columns].min()
+    max_vals = df[feature_columns].max()
 
-# --- Feature Engineering for the Neural Net ---
-# 1. Convert absolute price to % change
-df['price_change_pct'] = df['close'].pct_change()
+    # Safely handle dead/unchanged column channels to avoid dividing by zero
+    range_vals = (max_vals - min_vals).replace(0.0, 1.0)
 
-# 2. Calculate VWAP deviation (how far price is stretched from the volume average)
-df['vwap_dev'] = (df['close'] - df['vwap']) / df['vwap']
+    # Apply standard normalization matrix mapping
+    df_scaled = df.copy()
+    df_scaled[feature_columns] = (df[feature_columns] - min_vals) / range_vals
 
-df.dropna(inplace=True)
+    # Package parameters for Live Anomaly Ingestion Scripts
+    scaler_params = {
+        "features": feature_columns,
+        "mins": min_vals.to_dict(),
+        "maxs": max_vals.to_dict()
+    }
 
-# Select the final 8 features
-features = df[[
-    'price_change_pct', 'volume', 'vwap_dev',
-    'avg_spread', 'avg_imbalance',
-    'avg_score', 'tweet_count', 'net_flow_usd'
-]].values
+    sequences: list[np.ndarray] = []
+    current_block: list[np.ndarray] = []
+    last_timestamp: datetime | None = None
 
-print(f"Usable Data Shape: {features.shape}")
+    feature_matrix = df_scaled[feature_columns].to_numpy()
+    timestamps = df_scaled["bucket"].tolist()
 
-# Scale Data using StandardScaler (better for financial outliers than MinMax)
-scaler = StandardScaler()
-scaled_data = scaler.fit_transform(features)
+    # Continuous Running Evaluation Engine
+    for i, current_ts in enumerate(timestamps):
+        if last_timestamp is None:
+            current_block.append(feature_matrix[i])
+        else:
+            time_delta = current_ts - last_timestamp
+            # If step gap matches exact interval, chain remains continuous
+            if time_delta <= timedelta(minutes=BUCKET_DELTA_MINUTES):
+                current_block.append(feature_matrix[i])
+            else:
+                # Downtime detected. Slice completed blocks into 1-hour windows
+                if len(current_block) >= SEQUENCE_LENGTH:
+                    for start in range(len(current_block) - SEQUENCE_LENGTH + 1):
+                        sequences.append(np.array(current_block[start: start + SEQUENCE_LENGTH]))
+                current_block = [feature_matrix[i]]
 
-# Save the scaler so the live pipeline can use it
-os.makedirs("scripts/data/anomalies", exist_ok=True)
-with open("scripts/data/anomalies/anomaly_scaler.pkl", "wb") as f:
-    pickle.dump(scaler, f) # type: ignore
+        last_timestamp = current_ts
 
-# Create overlapping sequences
-sequences = []
-for i in range(len(scaled_data) - SEQ_LEN):
-    sequences.append(scaled_data[i:i + SEQ_LEN])
+    # Flush trailing active block
+    if len(current_block) >= SEQUENCE_LENGTH:
+        for start in range(len(current_block) - SEQUENCE_LENGTH + 1):
+            sequences.append(np.array(current_block[start: start + SEQUENCE_LENGTH]))
 
-X_train = torch.tensor(np.array(sequences), dtype=torch.float32)
+    final_sequences = np.array(sequences, dtype=np.float32)
+    LOGGER.info("Extracted %d clean sliding sequence windows of length %d.", len(final_sequences), SEQUENCE_LENGTH)
+    return final_sequences, scaler_params
 
-# Initialize LSTM with 8 features
-model = LSTMAutoencoder(num_features=8, hidden_dim=64, num_layers=2)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-criterion = nn.MSELoss()
 
-print("Training Autoencoder...")
-epochs = 50
-for epoch in range(epochs):
+def main() -> None:
+    # 1. Pipeline Extraction & In-Memory Verification
+    df = fetch_and_clean_dataframe()
+    X_train_np, scaler_params = extract_continuous_sequences(df)
+
+    if len(X_train_np) == 0:
+        LOGGER.error("Insufficient continuous timeline blocks to build a sequence. Aborting training.")
+        return
+
+    # Save Scaler Metadata configs for exact live inference scaling matches
+    with open(SCALER_SAVE_PATH, "w", encoding="utf-8") as f:
+        json.dump(scaler_params, f, indent=4)
+    LOGGER.info("Scaler normalization parameters exported to %s", SCALER_SAVE_PATH)
+
+    # 2. PyTorch Setup & Dataset Construction
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    LOGGER.info("Executing training loop on: %s", device)
+
+    X_tensor = torch.tensor(X_train_np)
+    dataset = TensorDataset(X_tensor, X_tensor)  # Unsupervised Target matches Input exactly
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+
+    input_dim = X_train_np.shape[2]
+    model = LSTMAutoencoder(input_dim=input_dim, hidden_dim=LATENT_DIM, seq_len=SEQUENCE_LENGTH).to(device)
+
+    criterion = nn.MSELoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+
+    # 3. Model Optimization Training Loop
     model.train()
-    optimizer.zero_grad()
-    reconstructed = model(X_train)
-    loss = criterion(reconstructed, X_train)
-    loss.backward()
-    optimizer.step()
-    if epoch % 10 == 0:
-        print(f"Epoch {epoch}, Loss: {loss.item():.6f}")
+    LOGGER.info("Beginning LSTM Autoencoder optimization sequence...")
 
-# Save the trained weights
-torch.save(model.state_dict(), "scripts/data/anomalies/anomaly_model.pth")
-print("Training complete. Model and Scaler successfully saved to scripts/data/anomalies/")
+    for epoch in range(1, EPOCHS + 1):
+        epoch_loss = 0.0
+        for batch_x, batch_y in dataloader:
+            batch_x, batch_y = batch_x.to(device), batch_y.to(device)
+
+            optimizer.zero_grad()
+            outputs = model(batch_x)
+            loss = criterion(outputs, batch_y)
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += loss.item() * batch_x.size(0)
+
+        avg_loss = epoch_loss / len(dataset)
+        if epoch % 5 == 0 or epoch == 1:
+            LOGGER.info("Epoch [%d/%d] | Reconstruction Loss: %.6f", epoch, EPOCHS, avg_loss)
+
+    # 4. Save Final Serialized Weights
+    torch.save(model.state_dict(), MODEL_SAVE_PATH)
+    LOGGER.info("LSTM Model successfully exported to %s", MODEL_SAVE_PATH)
+    LOGGER.info("Training cycle completed safely.")
+
+
+if __name__ == "__main__":
+    # Execution entry via Python module namespace: python -m scripts.train_anomaly_detector
+    main()

@@ -6,6 +6,7 @@ torch==2.5.1
 transformers==5.8.1
 datasets==4.8.5
 pandas==3.0.3
+numpy==2.4.4
 
 # -- Asynchronous Networking & APIs --
 httpx==0.28.1

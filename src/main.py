@@ -95,14 +95,14 @@ async def _run_all() -> None:
         LOGGER.warning("BITQUERY_API_KEY not set — CEX flow pipeline disabled")
 
     # 5. AI Anomaly Engine — Runs inference every 5 mins from DB (NEW)
-    #if settings.DB_URL:
-    #    anomaly_task = asyncio.create_task(
-    #        start_anomaly_stream(stop),
-    #        name="anomaly_engine",
-    #    )
-    #    tasks.append(anomaly_task)
-    #else:
-    #    LOGGER.warning("DB_URL not set — anomaly engine disabled")
+    if settings.DB_URL:
+        anomaly_task = asyncio.create_task(
+            start_anomaly_stream(stop),
+            name="anomaly_engine",
+        )
+        tasks.append(anomaly_task)
+    else:
+        LOGGER.warning("DB_URL not set — anomaly engine disabled")
 
     try:
         await stop.wait()

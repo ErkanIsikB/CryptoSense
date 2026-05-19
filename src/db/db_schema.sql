@@ -61,7 +61,7 @@ SELECT create_hypertable(
 DROP TABLE IF EXISTS sentiment_scores CASCADE;
 
 -- ============================================================
--- 4. Tweet Sentiment (5-minute aggregated from XQuik)
+-- 3. Tweet Sentiment (5-minute aggregated from XQuik)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS tweet_sentiment_5m (
     bucket          TIMESTAMPTZ     NOT NULL,
@@ -84,7 +84,7 @@ SELECT create_hypertable(
 );
 
 -- ============================================================
--- 5. CEX Flows (5-minute aggregated inflow/outflow)
+-- 4. CEX Flows (5-minute aggregated inflow/outflow)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS cex_flows_5m (
     bucket          TIMESTAMPTZ     NOT NULL,
@@ -106,8 +106,28 @@ SELECT create_hypertable(
     chunk_time_interval => INTERVAL '1 day'
 );
 
+-- ============================================================
+-- 5. AI Anomaly Engine Outputs (5-minute intervals)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS ai_anomalies_5m (
+    bucket          TIMESTAMPTZ     NOT NULL,
+    symbol          TEXT            NOT NULL,
+    mse_score       DOUBLE PRECISION,
+    is_anomaly      BOOLEAN         DEFAULT FALSE,
+    severity        TEXT,
+    llm_payload     JSONB,
+    UNIQUE (bucket, symbol)
+);
+
+SELECT create_hypertable(
+    'ai_anomalies_5m', 'bucket',
+    if_not_exists => TRUE,
+    chunk_time_interval => INTERVAL '1 day'
+);
+
 -- ── Indices for common query patterns ───────────────────────
 CREATE INDEX IF NOT EXISTS idx_trade_candles_symbol   ON trade_candles_5m (symbol, bucket DESC);
 CREATE INDEX IF NOT EXISTS idx_orderbook_symbol       ON orderbook_snapshots_5m (symbol, bucket DESC);
 CREATE INDEX IF NOT EXISTS idx_tweet_sentiment_symbol ON tweet_sentiment_5m (symbol, bucket DESC);
 CREATE INDEX IF NOT EXISTS idx_cex_flows_symbol       ON cex_flows_5m (symbol, bucket DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_anomalies_symbol ON ai_anomalies_5m (symbol, bucket DESC);
