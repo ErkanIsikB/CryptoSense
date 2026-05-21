@@ -1,331 +1,415 @@
-# CryptoSense — Real-Time Crypto Data Pipeline
+# CryptoSense — Real-Time Crypto Data Pipeline & AI Anomaly Detection Engine
 
-CryptoSense is a high-performance data engineering pipeline that ingests, processes, and persists multi-source cryptocurrency market data into TimescaleDB. It captures trades, orderbook depth, social sentiment from X (Twitter), and CEX fund flows — all aligned to 5-minute windows for downstream analysis and LLM consumption.
+CryptoSense is a high-performance, production-grade data engineering pipeline that ingests, processes, and persists multi-source cryptocurrency market data, sentiment, and on-chain fund flows into TimescaleDB. 
 
-## Architecture Overview
+In addition to temporal alignment and real-time ingestion, CryptoSense features a **state-of-the-art AI Anomaly Detection Engine** powered by unsupervised deep learning (LSTM Autoencoders). It analyzes 5-minute bucketed market, sentiment, and wallet transfer snapshots to detect deviations from baseline market dynamics and outputs highly structured payloads optimized for downstream LLM reasoning.
+
+---
+
+## 🏗️ Architecture Overview
+
+```mermaid
+graph TD
+    %% Ingestion Layer
+    subgraph Ingestion ["Ingestion Layer"]
+        BWS[Binance WebSocket <br/> Trades & Orderbook]
+        XQ[XQuik REST API <br/> Twitter Tweets]
+        B_CEX[Bitquery HTTP Poll <br/> 5m CEX Fund Flows]
+        B_WS[Bitquery WebSockets <br/> whale_trades, evm, solana]
+        B_HTTP[Bitquery HTTP Poll <br/> bnb & avax transfers]
+    end
+
+    %% Aggregation & Scoring
+    subgraph Processing ["Feature Engineering & ML Layer"]
+        TA[TradeAggregator <br/> 5-min OHLCV & Volume]
+        OA[OrderbookAggregator <br/> 5-min Average Depth & Spread]
+        SA[SentimentAggregator <br/> 5-min FinBERT Sentiment]
+        FS[FinBERT Model <br/> scoring compound scores]
+        JSONL[Local JSONL Backup <br/> Raw Ingress Files]
+    end
+
+    %% Database Layer
+    subgraph Storage ["TimescaleDB Database"]
+        T_TC[(trade_candles_5m)]
+        T_OS[(orderbook_snapshots_5m)]
+        T_TS[(tweet_sentiment_5m)]
+        T_CF[(cex_flows_5m)]
+        T_ANOM[(ai_anomalies_5m)]
+    end
+
+    %% AI Anomaly Detection Engine
+    subgraph ML_Engine ["AI Anomaly Detection Engine (PyTorch)"]
+        AP[Anomaly Pipeline <br/> Runs every 5 mins]
+        LSTM[LSTM Autoencoder <br/> 19 Features, 10 Latent Dim]
+        SCALER[Dynamic MinMax <br/> Normalizer per coin]
+    end
+
+    %% Flows
+    BWS --> TA
+    BWS --> OA
+    XQ --> FS --> SA
+    B_CEX --> T_CF
+    B_WS --> JSONL
+    B_HTTP --> JSONL
+    
+    TA --> T_TC
+    OA --> T_OS
+    SA --> T_TS
+    
+    T_TC --> AP
+    T_OS --> AP
+    T_TS --> AP
+    T_CF --> AP
+    
+    AP --> SCALER --> LSTM
+    LSTM -->|MSE Error > Threshold| AP
+    AP -->|Upsert anomaly metrics & LLM payload| T_ANOM
+
+    style ML_Engine fill:#2d1a47,stroke:#953df4,stroke-width:2px,color:#fff
+    style Ingestion fill:#1b2a47,stroke:#3d8bf4,stroke-width:1px,color:#fff
+    style Storage fill:#1a3c2a,stroke:#3df48b,stroke-width:1px,color:#fff
+    style Processing fill:#3a3a1a,stroke:#f4d63d,stroke-width:1px,color:#fff
+```
+
+### Dynamic Ingestion & Machine Learning Loops
+1. **Pipeline Execution**: Live trades (Binance), orderbook snapshot averages, sentiment models (XQuik/FinBERT), and exchange transfers are continuously aggregated into 5-minute buckets and committed directly to TimescaleDB.
+2. **AI Anomaly Engine**: Every 5 minutes, the engine queries the database, constructs a chronological 1-hour window (12 sequential 5-minute buckets) of 19 market and sentiment features, scales the metrics dynamically via trained MinMax scaling matrices, and inputs them into coin-specific LSTM Autoencoder models.
+3. **Statistical Outliers**: Reconstruction loss (MSE) is evaluated against a tuned volatility threshold. Severe errors trigger warnings and generate structured JSON payloads containing localized contextual states for instantaneous consumption by LLM agents.
+
+---
+
+## 📡 Data Extraction & Ingestion
+
+CryptoSense implements a dual-method data extraction pipeline to optimize both real-time ingestion fidelity and API credit conservation.
+
+### 1. Market Data (Binance Futures & REST)
+- **Aggregated Trades (`aggTrade`)**: Real-time trade events ingested over WebSockets from Binance Futures (`wss://fstream.binance.com/market/stream`).
+  - *Tracked Pairs*: `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `BNBUSDT`, `AVAXUSDT`.
+- **Orderbook Depth**: REST polling of active order book snapshots (top 20 bid/ask levels) every ~2.0 seconds to track depth and compute imbalance indexes.
+
+### 2. Social Sentiment (XQuik & FinBERT)
+- **X (Twitter) Monitoring**: Real-time keyword monitoring via the [XQuik](https://xquik.com) platform, checking keyword filters every 1 second server-side.
+- **Sentiment Inference**: Events are polled every 5 minutes and run locally through a pipeline-integrated `ProsusAI/FinBERT` Hugging Face model to score sentiment on a `[-1.0, +1.0]` (negative to positive) compound scale.
+
+### 3. On-Chain Exchange & Whale Flow (Bitquery GraphQL v2)
+Bitquery integration is heavily optimized using both HTTP polling and subscription mechanisms:
+- **CEX Flow Ingestion (`cex_flow_ingestion.py`)**: Runs every 5 minutes using HTTP GraphQL POSTs to compile aggregate exchange inflows and outflows for Ethereum, BSC, and Solana using predefined CEX hot-wallet coordinates.
+- **WebSocket Whale Trades (`ws_whale_trades.py`)**: Real-time subscription to DEX trades exceeding $100,000 in volume for our tracked assets.
+- **WebSocket Transfer Streams (`ws_evm_transfers.py` & `ws_solana_transfers.py`)**: Real-time subscription to large transfers (> $100,000) for Ethereum/EVM and Solana networks.
+- **Optimized Polling (`http_polling.py`)**: Periodic REST polling (5-minute interval) for BSC and Avalanche transfers to bypass WebSocket stream limits and conserve valuable API credits.
+
+All raw streams from Whale WebSockets and polling are safely flushed to structured local JSONL files in the background.
+
+---
+
+## 💾 Database Schema (TimescaleDB)
+
+TimescaleDB manages temporal data alignment seamlessly. All core tables are initialized as **hypertables** with a chunk interval of 1 day and optimized query indices.
+
+### 1. `trade_candles_5m` — OHLCV & Volume Metrics
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `bucket` 🔑 | TIMESTAMPTZ | 5-minute bucket start timestamp |
+| `symbol` 🔑 | TEXT | Cryptocurrency futures symbol (e.g. `BTCUSDT`) |
+| `open` / `high` / `low` / `close` | DOUBLE PRECISION | Token trade price metrics in bucket |
+| `volume` | DOUBLE PRECISION | Total token trade volume in bucket |
+| `quote_volume` | DOUBLE PRECISION | Quote asset volume (USDT) |
+| `trade_count` | INTEGER | Number of distinct trades in bucket |
+| `buy_volume` / `sell_volume` | DOUBLE PRECISION | Directional buying/selling volumes |
+| `net_trade` | DOUBLE PRECISION | Net buyer volume (`buy_volume - sell_volume`) |
+| `vwap` | DOUBLE PRECISION | Volume-Weighted Average Price |
+
+### 2. `orderbook_snapshots_5m` — Market Depth Metrics
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `bucket` 🔑 | TIMESTAMPTZ | 5-minute bucket start timestamp |
+| `symbol` 🔑 | TEXT | Trading pair symbol |
+| `avg_spread` | DOUBLE PRECISION | Average bid-ask spread in bucket |
+| `avg_mid_price` | DOUBLE PRECISION | Average mid price in bucket |
+| `avg_bid_depth` / `avg_ask_depth` | DOUBLE PRECISION | Average order volume on bid and ask sides |
+| `avg_imbalance` | DOUBLE PRECISION | Average imbalance ratio: `(bid - ask) / (bid + ask)` |
+| `snapshot_count` | INTEGER | Total book snapshots captured in bucket |
+
+### 3. `tweet_sentiment_5m` — X/Twitter Sentiment Metrics
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `bucket` 🔑 | TIMESTAMPTZ | 5-minute bucket start timestamp |
+| `symbol` 🔑 | TEXT | Unified token symbol (e.g. `BTC`) |
+| `avg_score` | DOUBLE PRECISION | Average FinBERT score `[-1, +1]` |
+| `tweet_count` | INTEGER | Total scored tweets matching keywords |
+| `positive_count` | INTEGER | Tweets with compound score > `+0.1` |
+| `negative_count` | INTEGER | Tweets with compound score < `-0.1` |
+| `neutral_count` | INTEGER | Tweets scoring between `-0.1` and `+0.1` |
+| `max_score` / `min_score` | DOUBLE PRECISION | Extremes of FinBERT scores observed in bucket |
+| `sample_tweet` | TEXT | Text of the tweet with highest community engagement |
+
+### 4. `cex_flows_5m` — Exchange Fund Flow Metrics
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `bucket` 🔑 | TIMESTAMPTZ | 5-minute bucket start timestamp |
+| `symbol` 🔑 | TEXT | Unified token symbol (e.g. `ETH`) |
+| `network` 🔑 | TEXT | Blockchain network (e.g. `ethereum`, `bsc`, `solana`) |
+| `inflow_amount` 🆕 | DOUBLE PRECISION | Cumulative volume of tokens moving into CEX wallets |
+| `inflow_usd` | DOUBLE PRECISION | Cumulative USD value of CEX inflows |
+| `outflow_amount` 🆕 | DOUBLE PRECISION | Cumulative volume of tokens moving out of CEX wallets |
+| `outflow_usd` | DOUBLE PRECISION | Cumulative USD value of CEX outflows |
+| `net_flow_usd` | DOUBLE PRECISION | Net flow in USD (`inflow_usd - outflow_usd`) |
+| `inflow_tx_count` / `outflow_tx_count` | INTEGER | Transaction counts per inflow/outflow direction |
+
+### 5. `ai_anomalies_5m` 🆕 — Deep Learning Engine Outputs
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `bucket` 🔑 | TIMESTAMPTZ | 5-minute bucket start timestamp |
+| `symbol` 🔑 | TEXT | Base asset symbol (e.g. `BTC`) |
+| `mse_score` | DOUBLE PRECISION | Mean Squared Error (reconstruction loss) from Autoencoder |
+| `is_anomaly` | BOOLEAN | `TRUE` if `mse_score` exceeds threshold (`0.008`) |
+| `severity` | TEXT | Severity ranking (`HIGH` if `mse_score > threshold * 2`, else `NORMAL`) |
+| `llm_payload` | JSONB | Complete JSON package ready for LLM consumption and reasoning |
+
+---
+
+## 🧠 AI Anomaly Detection Engine
+
+The AI Anomaly Detection Engine monitors the pipeline for multi-dimensional anomalies (price fluctuations, abrupt orderbook depth changes, sentiment shifts, and high-volume whale transfers) simultaneously.
+
+### 1. Deep Learning Model Architecture
+- **Model Type**: Unsupervised LSTM Autoencoder (`src/models/lstm_autoencoder.py`).
+- **Layers**:
+  - **Encoder**: An LSTM layer mapping input temporal features into a lower-dimensional latent space.
+  - **Decoder**: An LSTM layer that takes the latent vector, repeats it over the sequence length, reconstructs the inputs, and maps them back to the original dimensions via a Linear projection.
+- **Input Dimensions**: Sequence Length = `12` (representing exactly 1 hour of 5-minute buckets). Feature Dimensions = `19` (covering price metrics, volumes, spread, bid/ask depth, social sentiment, tweet counts, and net USD CEX flows).
+- **Latent Bottleneck**: `10` dimensions (`LATENT_DIM = 10`).
+
+### 2. Normalization & Inference Pipeline (`src/models/anomaly_pipeline.py`)
+- **Startup**: Dynamically loads PyTorch models (`lstm_autoencoder_<symbol>.pt`) and companion MinMax scaler files (`scaler_params_<symbol>.json`) for all monitored assets into RAM.
+- **Temporal Check**: Ensures sequential continuity. If any downtime gap (> 5 minutes) is discovered within the current 12-bucket window, inference is skipped to prevent invalid statistical projections.
+- **Inference Execution**: Wakes up every 5 minutes, constructs the normalized sequence using the loaded coin-specific scaler parameters, and runs PyTorch model evaluations to compute reconstruction error (MSE).
+- **Threshold Matching**: Classified as an anomaly if the MSE reconstruction loss exceeds the volatility baseline of `0.008`.
+- **Database Upsert**: Saves anomaly statuses, scores, and writes a detailed JSON payload (`llm_payload`) containing structured statistical context directly to `ai_anomalies_5m`.
+
+### 3. LLM-Ready Payload Structure
+When an anomaly is flagged, the JSON payload in `llm_payload` takes the following format, ready for direct injection into AI agent prompts:
+
+```json
+{
+  "timestamp": "2026-05-21T19:45:00Z",
+  "symbol": "BTC",
+  "market_data": {
+    "close_price": 71250.00,
+    "volume_5m": 345.2,
+    "orderbook_imbalance": 0.452
+  },
+  "sentiment": {
+    "avg_score": -0.420,
+    "tweet_count": 89
+  },
+  "AI_ENGINE": {
+    "reconstruction_error": 0.018542,
+    "is_statistical_anomaly": true,
+    "severity": "HIGH"
+  }
+}
+```
+
+---
+
+## 🛠️ Project Structure
 
 ```
-┌───────────────────────────────────────────────────────────────┐
-│                      CryptoSense Pipeline                     │
-├───────────────────────────────────────────────────────────────┤
-│                                                               │
-│  ┌─────────────┐   ┌─────────────┐   ┌─────────────────────┐ │
-│  │   Binance    │   │   XQuik     │   │    Bitquery         │ │
-│  │  WebSocket   │   │  REST API   │   │    REST API         │ │
-│  │  (Futures)   │   │  (X/Twitter)│   │   (CEX Flows)       │ │
-│  └──────┬───┬──┘   └──────┬──────┘   └──────────┬──────────┘ │
-│         │   │              │                     │            │
-│    aggTrade depth      tweets              transfers          │
-│         │   │              │                     │            │
-│  ┌──────▼───▼──────────────▼─────────────────────▼──────────┐ │
-│  │              Feature Engineering Layer                    │ │
-│  │                                                           │ │
-│  │  TradeAggregator  OrderbookAggregator  SentimentAggregator│ │
-│  │  (5-min OHLCV)    (5-min averages)     (5-min FinBERT)    │ │
-│  └──────────────────────────┬────────────────────────────────┘ │
-│                             │                                  │
-│  ┌──────────────────────────▼────────────────────────────────┐ │
-│  │                    TimescaleDB                            │ │
-│  │                                                           │ │
-│  │  trade_candles_5m │ orderbook_snapshots_5m                │ │
-│  │  tweet_sentiment_5m │ cex_flows_5m                        │ │
-│  └───────────────────────────────────────────────────────────┘ │
-└───────────────────────────────────────────────────────────────┘
+CryptoSense/
+├── main.py                           # Unified system orchestrator (starts all pipelines)
+├── requirements.txt                  # Python dependencies
+├── .env                              # System settings & secret keys (git-ignored)
+├── .gitignore
+├── README.md                         # Project documentation
+├── scripts/                          # Utility & Diagnostics Suite
+│   ├── check_live_data.py            # Diagnostic script to print the latest DB entries
+│   ├── clean_jsonl.py                # Local JSONL file cleanup helper
+│   ├── cleanup_test_data.py          # Development cleanup utility
+│   ├── run_migration.py              # Standalone migration script
+│   ├── test_bitquery_usage.py        # Connection and query validator for Bitquery APIs
+│   ├── test_integration.py           # Pipelines integration test pushing mock data
+│   ├── train_anomaly_detector.py     # Unsupervised model training on TimescaleDB data
+│   └── verify_db.py                  # Standalone verification script for db hypertables
+└── src/                              # Core Application Codebase
+    ├── __init__.py
+    ├── core/
+    │   ├── config/
+    │   │   └── settings.py           # Dotenv configuration parser
+    │   └── utils/
+    │       ├── logging.py            # Color-coded logging configuration
+    │       └── signals.py            # Graceful shutdown handler
+    ├── data_sources/                 # Ingestion Drivers
+    │   ├── binancewebsocket/
+    │   │   ├── ws_trades_ingestion.py    # Binance Futures trades stream (aggTrade)
+    │   │   └── ws_orderbook_ingestion.py # Binance orderbook snapshots poller
+    │   ├── bitquery/                     # Bitquery integration module
+    │   │   ├── cex_addresses.py          # Known CEX hot-wallets & smart contract keys
+    │   │   ├── cex_flow_ingestion.py     # 5-min CEX inflows/outflows aggregation poller
+    │   │   ├── http_polling.py           # Conserves limits by polling BSC & AVAX transfers
+    │   │   ├── ws_evm_transfers.py       # ETH/EVM transfers WebSocket subscription
+    │   │   ├── ws_solana_transfers.py    # Solana transfers WebSocket subscription
+    │   │   └── ws_whale_trades.py        # DEX whale trades WebSocket subscription
+    │   └── xquik/
+    │       └── xquik_ingestion.py        # Keyword polling & sentiment orchestration
+    ├── feature_engineering/          # Aggregation Engines
+    │   ├── trade_aggregator.py       # Computes OHLCV, VWAP, buy/sell ratios
+    │   ├── orderbook_aggregator.py   # Computes spread averages, depths, and imbalances
+    │   ├── sentiment_aggregator.py   # Computes compound score distribution metrics
+    │   └── sentiment_scorer.py       # FinBERT sentiment scoring implementation
+    ├── models/                       # Deep Learning Engine
+    │   ├── lstm_autoencoder.py       # PyTorch LSTM Autoencoder architecture
+    │   ├── anomaly_pipeline.py       # Real-time anomaly inference pipeline
+    │   └── saved_weights/            # Model parameters directory
+    │       ├── lstm_autoencoder_*.pt # PyTorch model weights (git-ignored)
+    │       └── scaler_params_*.json  # Scaler configuration files
+    ├── db/                           # TimescaleDB Layer
+    │   ├── db.py                     # Thread-safe PgPool connector
+    │   └── db_schema.sql             # SQL migrations setup (Hypertables & indexes)
+    └── sinks/                        # Sink Router Layer
+        ├── base.py                   # Base interface
+        ├── jsonl_sink.py             # Backup JSONL file sink
+        └── timescale_sink.py         # Primary aggregator-routed DB sink
 ```
 
-## Data Sources
+---
 
-### 1. Binance Futures — Trade Stream (`aggTrade`)
-Real-time aggregated trade events via WebSocket from Binance Futures.
+## 🚀 Setup & Execution
 
-- **Symbols:** BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, AVAXUSDT
-- **Endpoint:** `wss://fstream.binance.com/market/stream`
-- **Frequency:** Real-time (continuous stream)
+### 1. Install System Prerequisites
+- **Python Version**: `Python 3.11+`
+- **Database**: Active [TimescaleDB](https://www.timescale.com/) instance (e.g. Timescale Cloud).
 
-### 2. Binance — Orderbook Depth
-REST polling of order book snapshots (top 20 bid/ask levels).
-
-- **Endpoint:** `https://api.binance.com/api/v3/depth`
-- **Frequency:** Every ~4 seconds
-
-### 3. XQuik — X (Twitter) Sentiment
-Real-time keyword monitoring on X/Twitter using [XQuik](https://xquik.com) platform. Captures tweets matching crypto-specific keyword queries and scores them through FinBERT.
-
-- **Endpoint:** `https://xquik.com/api/v1`
-- **Frequency:** Keyword monitors check every 1 second (server-side); events are polled every 5 minutes
-- **Scoring:** ProsusAI/FinBERT sentiment model (positive/negative/neutral → compound score [-1, +1])
-- **Keyword Queries:**
-  - BTC: `$BTC OR #Bitcoin OR "bitcoin"`
-  - ETH: `$ETH OR #Ethereum OR "ethereum"`
-  - SOL: `$SOL OR #Solana OR "solana"`
-  - BNB: `$BNB OR "bnb" OR "binance coin"`
-  - AVAX: `$AVAX OR #Avalanche OR "avalanche crypto"`
-
-### 4. Bitquery — CEX Fund Flows
-HTTP polling for large transfers involving known CEX hot wallets across Ethereum, BSC, and Solana.
-
-- **Endpoint:** `https://streaming.bitquery.io/graphql`
-- **Networks:** `eth`, `bsc`, `solana`
-- **Frequency:** Every 5 minutes
-- **Filter:** Server-side CEX address filtering (inflows = Receiver is CEX, outflows = Sender is CEX)
-
-## Database Schema (TimescaleDB)
-
-All tables use 5-minute bucketed timestamps for temporal alignment.
-
-### `trade_candles_5m` — OHLCV Candles
-| Column | Type | Description |
-|--------|------|-------------|
-| `bucket` | TIMESTAMPTZ | 5-minute window start |
-| `symbol` | TEXT | e.g. BTCUSDT |
-| `open/high/low/close` | FLOAT | Price OHLC |
-| `volume` | FLOAT | Total volume |
-| `quote_volume` | FLOAT | Quote asset volume |
-| `trade_count` | INT | Number of trades |
-| `buy_volume/sell_volume` | FLOAT | Directional volume |
-| `net_trade` | FLOAT | buy_volume - sell_volume |
-| `vwap` | FLOAT | Volume-weighted average price |
-
-### `orderbook_snapshots_5m` — Depth Metrics
-| Column | Type | Description |
-|--------|------|-------------|
-| `bucket` | TIMESTAMPTZ | 5-minute window start |
-| `symbol` | TEXT | e.g. BTCUSDT |
-| `avg_spread` | FLOAT | Average bid-ask spread |
-| `avg_mid_price` | FLOAT | Average mid price |
-| `avg_bid_depth/avg_ask_depth` | FLOAT | Average depth per side |
-| `avg_imbalance` | FLOAT | (bid - ask) / (bid + ask) |
-| `snapshot_count` | INT | Snapshots in window |
-
-### `tweet_sentiment_5m` — X/Twitter Sentiment (via XQuik)
-| Column | Type | Description |
-|--------|------|-------------|
-| `bucket` | TIMESTAMPTZ | 5-minute window start |
-| `symbol` | TEXT | e.g. BTC |
-| `avg_score` | FLOAT | Mean FinBERT compound score [-1, +1] |
-| `tweet_count` | INT | Total tweets in window |
-| `positive_count` | INT | Tweets with score > +0.1 |
-| `negative_count` | INT | Tweets with score < -0.1 |
-| `neutral_count` | INT | Remaining tweets |
-| `max_score/min_score` | FLOAT | Extremes in window |
-| `sample_tweet` | TEXT | Highest-engagement tweet text |
-
-### `cex_flows_5m` — Exchange Fund Flows
-| Column | Type | Description |
-|--------|------|-------------|
-| `bucket` | TIMESTAMPTZ | 5-minute window start |
-| `symbol` | TEXT | e.g. ETH |
-| `network` | TEXT | e.g. ethereum, bsc |
-| `inflow_usd/outflow_usd` | FLOAT | USD value of flows |
-| `net_flow_usd` | FLOAT | inflow - outflow |
-| `inflow_tx_count/outflow_tx_count` | INT | Transaction counts |
-
-## Setup
-
-### Prerequisites
-- Python 3.11+
-- TimescaleDB instance (we use [Timescale Cloud](https://www.timescale.com/cloud))
-- API keys: XQuik, Bitquery
-
-### 1. Clone & Create Virtual Environment
+### 2. Clone Repository & Setup Environment
 ```bash
 git clone <repository-url>
 cd CryptoSense
-python -m venv .venv
-source .venv/bin/activate
-```
 
-### 2. Install Dependencies
-```bash
+# Create and activate virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install requirements
 pip install -r requirements.txt
 ```
 
-Key dependencies:
-- `psycopg2-binary` — PostgreSQL/TimescaleDB driver
-- `transformers` + `torch` — FinBERT sentiment model
-- `httpx` — Async HTTP client for XQuik and Bitquery APIs
-- `websockets` — Binance WebSocket client
-
-### 3. Configure Environment Variables
-
+### 3. Configure `.env`
 Create a `.env` file in the project root:
 
 ```env
-# ── Database ──────────────────────────────────────────
-DB_URL=postgres://user:pass@host:port/dbname?sslmode=require
+# ── TimescaleDB Connection DSN ─────────────────────────
+DB_URL=postgres://tsdb_user:tsdb_password@host:port/tsdb?sslmode=require
 
-# ── XQuik (X/Twitter Sentiment) ──────────────────────
-XQUIK_API=xq_your_api_key_here
+# ── XQuik API Credentials (Social Sentiment) ───────────
+XQUIK_API=xq_your_xquik_key
 
-# ── Bitquery (CEX Flows) ─────────────────────────────
+# ── Bitquery API Keys (On-chain Fund Flows) ────────────
 BITQUERY_API_KEY=your_bitquery_key
 
-# ── Binance ───────────────────────────────────────────
+# ── Symbol & Network Configurations ────────────────────
 BINANCE_SYMBOLS=btcusdt,ethusdt,solusdt,bnbusdt,avaxusdt
+CEX_FLOW_NETWORKS=eth,bsc,solana
 
-# ── Logging ───────────────────────────────────────────
+# ── Log Settings ───────────────────────────────────────
 LOG_LEVEL=INFO
 ```
 
-### 4. Run Schema Migration
+---
+
+## 🏃 Operation Guide
+
+### 1. Database Migrations
+Run the schema setup script to initialize TimescaleDB hypertables, custom index structures, and the AI anomalies table. Safe to run multiple times:
 ```bash
-python run_migration.py
+python -m scripts.run_migration
 ```
-This creates all hypertables and indices. Safe to run multiple times (idempotent).
 
-## Running
-
-### Start the Pipeline
+### 2. Start the Pipeline Orchestrator
+Start the main program. This connects to Binance futures, starts REST polls, initiates WebSocket whale subscriptions, registers XQuik keyword monitors, and runs the AI Anomaly Engine in the background:
 ```bash
-python -m src.main
+python main.py
 ```
 
-On startup you will see:
-1. **Schema migration** — ensures all tables exist
-2. **XQuik keyword monitors** — creates/reuses monitors for each coin
-3. **Binance WebSocket** — connects to futures trade stream
-4. **Orderbook polling** — starts depth snapshot polling
-5. **Bitquery CEX flows** — starts fund flow polling
-
-### Check Live Data
+### 3. Model Training Sequence
+To train or update the unsupervised LSTM Autoencoder on clean historical sequences extracted directly from your TimescaleDB instance:
 ```bash
-python check_live_data.py
+python -m scripts.train_anomaly_detector
 ```
-Displays the latest rows from all database tables.
+> **Note:** The script will automatically fit custom MinMax normalizers, save them as JSON parameters, optimize the LSTM network weights using an MSE criteria over 100 epochs, and export all assets directly to `src/models/saved_weights/` for instant live reload.
 
-### Stop the Pipeline
-Press `Ctrl+C`. The pipeline will:
-1. Stop all data streams
-2. **Pause all XQuik keyword monitors** (saves credits while not running)
-3. Flush any remaining buffered data to the database
-4. Close the connection pool
+### 4. Diagnostics & Live Inspections
+You can inspect the state of your database schemas, integration aggregates, and active records at any time:
+- **Test Ingestion Flow (Mock Data)**:
+  ```bash
+  python -m scripts.test_integration
+  ```
+- **Database Hypertables Diagnostics**:
+  ```bash
+  python -m scripts.verify_db
+  ```
+- **Inspect Live Table Outputs**:
+  ```bash
+  python -m scripts.check_live_data
+  ```
 
-> **Note:** On next startup, paused monitors are automatically unpaused.
+---
 
-## How It Works
+## 📊 Temporal Alignment & Cross-Table JOINs
 
-### Feature Engineering — 5-Minute Aggregation
-
-All raw data streams are processed through stateful aggregators before writing to the database:
-
-1. **TradeAggregator** — Buffers individual trades by `(symbol, 5-min bucket)`. When a trade arrives in a new bucket, the completed bucket is flushed as an OHLCV candle with volume, VWAP, and net trade metrics.
-
-2. **OrderbookAggregator** — Accumulates orderbook snapshots and computes running averages for spread, mid-price, depth, and imbalance ratio. Flushes on bucket boundary.
-
-3. **SentimentAggregator** — Receives FinBERT-scored tweets from XQuik keyword monitors. Tracks score distribution (positive/negative/neutral counts, min/max), selects highest-engagement tweet as sample. Flushes per-symbol aggregated sentiment on bucket boundary.
-
-### XQuik Integration Flow
-
-```
-Startup
-  └─→ GET /monitors/keywords (list existing)
-  └─→ POST /monitors/keywords (create missing ones)
-  └─→ monitors are now active (checking X every 1 second)
-
-Every 5 minutes:
-  └─→ GET /events?keywordMonitorId=N&limit=100 (per coin)
-  └─→ Paginate if hasMore=true
-  └─→ For each tweet: FinBERT scoring → SentimentAggregator
-  └─→ Aggregator auto-flushes completed 5-min buckets to DB
-```
-
-### Temporal Alignment
-
-All data types share the same 5-minute bucket boundaries:
-- Trade candles: `trade_candles_5m.bucket`
-- Orderbook: `orderbook_snapshots_5m.bucket`
-- Sentiment: `tweet_sentiment_5m.bucket`
-- CEX flows: `cex_flows_5m.bucket`
-
-This makes it trivial to JOIN across tables for a complete market snapshot:
+Because all 5-minute ingestion buckets share identical boundaries, joining metrics for modeling or downstream analytics is simplified:
 
 ```sql
 SELECT
     t.bucket,
     t.symbol,
-    t.close as price,
-    t.volume,
-    t.net_trade,
-    t.vwap,
-    o.avg_imbalance as orderbook_imbalance,
-    o.avg_spread,
-    s.avg_score as sentiment,
-    s.tweet_count,
-    s.positive_count,
-    s.negative_count
+    t.close AS last_price,
+    t.volume AS trade_volume,
+    o.avg_imbalance AS orderbook_imbalance,
+    s.avg_score AS sentiment_score,
+    s.tweet_count AS total_tweets,
+    c.net_flow_usd AS net_wallet_flow,
+    a.is_anomaly AS ai_anomaly_detected,
+    a.mse_score AS autoencoder_loss
 FROM trade_candles_5m t
 LEFT JOIN orderbook_snapshots_5m o
     ON t.bucket = o.bucket AND t.symbol = o.symbol
 LEFT JOIN tweet_sentiment_5m s
     ON t.bucket = s.bucket AND REPLACE(t.symbol, 'USDT', '') = s.symbol
+LEFT JOIN (
+    SELECT bucket, symbol, SUM(net_flow_usd) AS net_flow_usd
+    FROM cex_flows_5m
+    GROUP BY bucket, symbol
+) c
+    ON t.bucket = c.bucket AND REPLACE(t.symbol, 'USDT', '') = c.symbol
+LEFT JOIN ai_anomalies_5m a
+    ON t.bucket = a.bucket AND REPLACE(t.symbol, 'USDT', '') = a.symbol
 WHERE t.symbol = 'BTCUSDT'
 ORDER BY t.bucket DESC
 LIMIT 10;
 ```
 
-## Cost Considerations
+---
 
-### XQuik
-- Active keyword monitors: **21 credits/hour each**
-- 5 monitors = **105 credits/hour** (~2,520 credits/day)
-- Event reading: **free** (included in monitor billing)
+## 📈 Asset Matrix
 
-### Bitquery
-- GraphQL queries: metered per API plan
+| Symbol | Pair | Trades Stream | Orderbook | Sentiment | CEX Flow Network | AI Anomaly Monitored |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **BTC** | `BTCUSDT` | ✅ | ✅ | ✅ | `ethereum` | ✅ |
+| **ETH** | `ETHUSDT` | ✅ | ✅ | ✅ | `ethereum`, `bsc` | ✅ |
+| **SOL** | `SOLUSDT` | ✅ | ✅ | ✅ | `solana` | ✅ |
+| **BNB** | `BNBUSDT` | ✅ | ✅ | ✅ | `bsc` | ✅ |
+| **AVAX** | `AVAXUSDT` | ✅ | ✅ | ✅ | `avalanche` | ✅ |
 
-### Binance
-- WebSocket `aggTrade` stream: **free** (no API key required)
-- REST orderbook depth: **free** (no API key required)
+---
 
-## Project Structure
+## 💳 Credit & Ingestion Considerations
 
-```
-CryptoSense/
-├── src/
-│   ├── main.py                          # Orchestrator — starts all pipelines
-│   ├── core/
-│   │   ├── config/
-│   │   │   └── settings.py              # Centralized configuration from .env
-│   │   └── utils/
-│   │       ├── logging.py               # Structured logging setup
-│   │       └── signals.py               # Graceful shutdown signal handling
-│   ├── data_sources/
-│   │   ├── binancewebsocket/
-│   │   │   ├── ws_trades_ingestion.py   # Binance Futures aggTrade WebSocket
-│   │   │   └── ws_orderbook_ingestion.py# Orderbook depth REST polling
-│   │   ├── xquik/
-│   │   │   └── xquik_ingestion.py       # XQuik keyword monitor + event polling
-│   │   ├── bitquery/
-│   │   │   └── cex_flow_ingestion.py    # Bitquery CEX flow GraphQL polling
-│   │   └── tavily/
-│   │       └── tavily_ingestion.py      # Legacy Tavily web sentiment (disabled)
-│   ├── feature_engineering/
-│   │   ├── trade_aggregator.py          # 5-min OHLCV candle aggregation
-│   │   ├── orderbook_aggregator.py      # 5-min orderbook metric aggregation
-│   │   ├── sentiment_aggregator.py      # 5-min tweet sentiment aggregation
-│   │   └── sentiment_scorer.py          # FinBERT model loading & inference
-│   ├── sinks/
-│   │   └── timescale_sink.py            # Routes data to appropriate aggregators
-│   └── db/
-│       ├── db.py                        # Connection pool & query helpers
-│       └── db_schema.sql                # TimescaleDB schema migration
-├── run_migration.py                     # Standalone migration runner
-├── check_live_data.py                   # Database inspection utility
-├── requirements.txt
-├── .env                                 # API keys & config (git-ignored)
-└── .gitignore
-```
+- **XQuik Keyword Billing**: Active monitors consume **21 credits/hour each** (105 credits/hour total across 5 tracked symbols). Event polling itself is free.
+- **Bitquery Billing**: WebSockets and HTTP GraphQL requests consume credits according to your Bitquery Developer plan. Polling intervals for BSC/AVAX transfers are throttled to 5 minutes to keep credit usage efficient.
+- **Binance WebSocket Ingestion**: Zero-cost, zero-API key required.
 
-## Tracked Symbols
+---
 
-| Symbol | Pair | Trade Stream | Orderbook | Sentiment | CEX Flows |
-|--------|------|:---:|:---:|:---:|:---:|
-| BTC | BTCUSDT | ✅ | ✅ | ✅ | ✅ (eth) |
-| ETH | ETHUSDT | ✅ | ✅ | ✅ | ✅ (eth, bsc) |
-| SOL | SOLUSDT | ✅ | ✅ | ✅ | ✅ (solana) |
-| BNB | BNBUSDT | ✅ | ✅ | ✅ | — |
-| AVAX | AVAXUSDT | ✅ | ✅ | ✅ | — |
+## 📄 License
 
-## License
-
-This project is for educational and research purposes.
+This repository is maintained for research, analytical model development, and educational purposes. All deep learning and quantitative code is provided as-is.
