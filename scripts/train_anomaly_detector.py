@@ -50,7 +50,8 @@ logger.addHandler(handler)
 LOGGER = logger
 
 # --- Constants & Tuning Hyperparameters ---
-TARGET_SYMBOL: Final[str] = "BTC"
+TARGET_SYMBOL = "AVAXUSDT"
+BASE_SYMBOL = TARGET_SYMBOL.replace("USDT", "")
 SEQUENCE_LENGTH: Final[int] = 12  # 12 rows = Exactly 60 minutes
 BUCKET_DELTA_MINUTES: Final[int] = 5
 EPOCHS: Final[int] = 100
@@ -64,14 +65,13 @@ PROJECT_ROOT: Final[str] = os.path.dirname(os.path.dirname(os.path.abspath(__fil
 # Model & Parameter Save Coordinates
 MODEL_DIR: Final[str] = os.path.join(PROJECT_ROOT, "src", "models", "saved_weights")
 os.makedirs(MODEL_DIR, exist_ok=True)
-MODEL_SAVE_PATH: Final[str] = os.path.join(MODEL_DIR, f"lstm_autoencoder_{TARGET_SYMBOL.lower()}.pt")
-SCALER_SAVE_PATH: Final[str] = os.path.join(MODEL_DIR, f"scaler_params_{TARGET_SYMBOL.lower()}.json")
+MODEL_SAVE_PATH: Final[str] = os.path.join(MODEL_DIR, f"lstm_autoencoder_{BASE_SYMBOL.lower()}.pt")
+SCALER_SAVE_PATH: Final[str] = os.path.join(MODEL_DIR, f"scaler_params_{BASE_SYMBOL.lower()}.json")
 
 # --- Structured SQL Query Formulation ---
 SQL_DATA_EXTRACT: Final[str] = """
 SELECT 
     COALESCE(t.bucket, o.bucket, s.bucket, c.bucket) AS final_bucket,
-    -- Trade Candles Features
     COALESCE(t.open, 0.0) as open, 
     COALESCE(t.high, 0.0) as high, 
     COALESCE(t.low, 0.0) as low, 
@@ -80,33 +80,32 @@ SELECT
     COALESCE(t.trade_count, 0) as trade_count, 
     COALESCE(t.net_trade, 0.0) as net_trade, 
     COALESCE(t.vwap, 0.0) as vwap,
-    -- Orderbook Features
     COALESCE(o.avg_spread, 0.0) as avg_spread, 
     COALESCE(o.avg_mid_price, 0.0) as avg_mid_price, 
     COALESCE(o.avg_bid_depth, 0.0) as avg_bid_depth, 
     COALESCE(o.avg_ask_depth, 0.0) as avg_ask_depth, 
     COALESCE(o.avg_imbalance, 0.0) as avg_imbalance,
-    -- Sentiment Features
     COALESCE(s.avg_score, 0.0) as avg_score, 
     COALESCE(s.tweet_count, 0) as tweet_count, 
     COALESCE(s.positive_count, 0) as positive_count, 
     COALESCE(s.negative_count, 0) as negative_count,
-    -- Pre-Aggregated Network CEX Flows
     COALESCE(c.net_flow_usd, 0.0) as net_flow_usd
 FROM trade_candles_5m t
 FULL OUTER JOIN orderbook_snapshots_5m o 
     ON t.bucket = o.bucket AND t.symbol = o.symbol
 FULL OUTER JOIN tweet_sentiment_5m s 
-    ON COALESCE(t.bucket, o.bucket) = s.bucket AND COALESCE(t.symbol, o.symbol) = s.symbol
+    ON COALESCE(t.bucket, o.bucket) = s.bucket 
+    AND REPLACE(COALESCE(t.symbol, o.symbol), 'USDT', '') = s.symbol
 FULL OUTER JOIN (
     SELECT bucket, symbol, SUM(net_flow_usd) as net_flow_usd 
     FROM cex_flows_5m 
     GROUP BY bucket, symbol
 ) c 
     ON COALESCE(t.bucket, o.bucket, s.bucket) = c.bucket 
-    AND COALESCE(t.symbol, o.symbol, s.symbol) = c.symbol
-WHERE COALESCE(t.bucket, o.bucket, s.bucket, c.bucket) >= '2026-05-15 00:25:00+00'
-  AND COALESCE(t.symbol, o.symbol, s.symbol, c.symbol) = %s
+    AND REPLACE(COALESCE(t.symbol, o.symbol), 'USDT', '') = c.symbol
+WHERE COALESCE(t.symbol, o.symbol) = %s 
+   OR s.symbol = %s 
+   OR c.symbol = %s
 ORDER BY final_bucket ASC;
 """
 
@@ -115,7 +114,7 @@ ORDER BY final_bucket ASC;
 def fetch_and_clean_dataframe() -> pd.DataFrame:
     """Query TimescaleDB, apply UTC localization, and handle column formats."""
     LOGGER.info("Querying TimescaleDB for clean %s dataset...", TARGET_SYMBOL)
-    raw_rows = execute_query_fetch(SQL_DATA_EXTRACT, (TARGET_SYMBOL,))
+    raw_rows = execute_query_fetch(SQL_DATA_EXTRACT, (TARGET_SYMBOL, BASE_SYMBOL, BASE_SYMBOL))
     print(f"SQL gave us these {len(raw_rows[0])} items:", raw_rows[0])
     if not raw_rows:
         raise ValueError(f"Zero clean training samples found for {TARGET_SYMBOL} after the cutoff timestamp.")
