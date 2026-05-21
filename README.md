@@ -193,15 +193,27 @@ When an anomaly is flagged, the JSON payload in `llm_payload` takes the followin
 ```json
 {
   "timestamp": "2026-05-21T19:45:00Z",
-  "symbol": "BTC",
+  "symbol": "BTCUSDT",
   "market_data": {
     "close_price": 71250.00,
-    "volume_5m": 345.2,
-    "orderbook_imbalance": 0.452
+    "volume_5m": 345.20,
+    "vwap": 71245.50,
+    "net_trade": 12.50
+  },
+  "orderbook": {
+    "avg_spread": 0.0500,
+    "avg_imbalance": 0.452,
+    "bid_depth": 1250000.00,
+    "ask_depth": 850000.00
   },
   "sentiment": {
     "avg_score": -0.420,
-    "tweet_count": 89
+    "tweet_count": 89,
+    "positive_count": 15,
+    "negative_count": 52
+  },
+  "on_chain": {
+    "net_cex_flow_usd": -125000.00
   },
   "AI_ENGINE": {
     "reconstruction_error": 0.018542,

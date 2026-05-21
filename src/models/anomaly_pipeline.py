@@ -174,16 +174,29 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
                     "market_data": {
                         "close_price": round(latest_data["close"], 2),
                         "volume_5m": round(latest_data["volume"], 2),
-                        "orderbook_imbalance": round(latest_data["avg_imbalance"], 3)
+                        "vwap": round(latest_data["vwap"], 2),
+                        "net_trade": round(latest_data["net_trade"], 2)
+                    },
+                    "orderbook": {
+                        "avg_spread": round(latest_data["avg_spread"], 4),
+                        "avg_imbalance": round(latest_data["avg_imbalance"], 3),
+                        "bid_depth": round(latest_data["avg_bid_depth"], 2),
+                        "ask_depth": round(latest_data["avg_ask_depth"], 2)
                     },
                     "sentiment": {
                         "avg_score": round(latest_data["avg_score"], 3),
-                        "tweet_count": int(latest_data["tweet_count"])
+                        "tweet_count": int(latest_data["tweet_count"]),
+                        "positive_count": int(latest_data["positive_count"]),
+                        "negative_count": int(latest_data["negative_count"])
+                    },
+                    "on_chain": {
+                        "net_cex_flow_usd": round(latest_data["net_flow_usd"], 2)
                     },
                     "AI_ENGINE": {
                         "reconstruction_error": round(mse, 6),
                         "is_statistical_anomaly": is_anomaly,
-                        "severity": "HIGH" if mse > (ANOMALY_THRESHOLD * 2) else "NORMAL"
+                        "severity": "CRITICAL" if mse > (
+                                    ANOMALY_THRESHOLD * 2) else "HIGH" if is_anomaly else "NORMAL"
                     }
                 }
 
