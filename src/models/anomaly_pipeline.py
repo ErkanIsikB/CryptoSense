@@ -57,10 +57,10 @@ JOIN trade_candles_5m t ON t.bucket = fb.bucket AND t.symbol = fb.symbol
 JOIN orderbook_snapshots_5m o ON o.bucket = fb.bucket AND o.symbol = fb.symbol
 JOIN tweet_sentiment_5m s ON s.bucket = fb.bucket AND s.symbol = REPLACE(fb.symbol, 'USDT', '')
 LEFT JOIN (
-    SELECT bucket, symbol, SUM(net_flow_usd) as net_flow_usd 
+    SELECT bucket, TRIM(symbol) as symbol, SUM(net_flow_usd) as net_flow_usd 
     FROM cex_flows_5m 
     GROUP BY bucket, symbol
-) c ON c.bucket = fb.bucket AND c.symbol = REPLACE(fb.symbol, 'USDT', '')
+) c ON c.bucket = fb.bucket AND c.symbol = TRIM(REPLACE(fb.symbol, 'USDT', ''))
 WHERE fb.symbol = %s
 ORDER BY final_bucket DESC
 LIMIT %s;

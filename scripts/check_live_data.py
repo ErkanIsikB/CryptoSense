@@ -11,9 +11,15 @@ if __name__ == "__main__":
     try:
         # 1. Tweet sentiment (5-min buckets from XQuik)
         rows = execute_query_fetch("""
-            SELECT bucket, symbol, avg_score, tweet_count,
-                   positive_count, negative_count, neutral_count,
-                   max_score, min_score, LEFT(sample_tweet, 60) as sample
+            SELECT bucket, symbol, 
+                   COALESCE(avg_score, 0.0), 
+                   tweet_count,
+                   positive_count, 
+                   negative_count, 
+                   neutral_count,
+                   COALESCE(max_score, 0.0), 
+                   COALESCE(min_score, 0.0), 
+                   LEFT(COALESCE(sample_tweet, 'No tweets (Fallback Window)'), 60) as sample
             FROM tweet_sentiment_5m
             ORDER BY bucket DESC
             LIMIT 5;
