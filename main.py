@@ -109,15 +109,20 @@ async def _run_all() -> None:
     finally:
         LOGGER.info("shutdown signal received — stopping all pipelines")
         stop.set()
+        
+        # 1. Stop Ingestion Entrances & Streams First
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Flush remaining aggregated data to DB
+        # 2. Introduce a Short Settling Grace Period (allow background threads to exit connection contexts)
+        await asyncio.sleep(1.0)
+
+        # 3. Tear Down Sinks & Trigger/Await Final Flushes (flushes run synchronously)
         if timescale_sink is not None:
             await timescale_sink.close()
 
-        # Close DB connection pool
+        # 4. Kill the Connection Pool LAST
         if settings.DB_URL:
             close_pool()
 

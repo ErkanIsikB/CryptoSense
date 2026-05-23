@@ -193,14 +193,27 @@ async def start_trade_stream(stop: asyncio.Event, sink: BaseSink | None = None) 
     if sink is None:
         sink = JsonlFileSink(OUTPUT_DIR)
 
+    async def periodic_flusher() -> None:
+        while not stop.is_set():
+            try:
+                await asyncio.sleep(15.0)
+                now_ms = int(time.time() * 1000)
+                if sink is not None and hasattr(sink, "trade_aggregator"):
+                    # Passively flushes any stale buckets whose logical end times are in the past
+                    sink.trade_aggregator._maybe_flush(now_ms)
+            except Exception as e:
+                LOGGER.error("error in periodic trade flusher: %s", e)
+
     listener_task = asyncio.create_task(_listen(symbols, queue, stop))
     aggregator_task = asyncio.create_task(_aggregator(queue, stop, sink))
+    flusher_task = asyncio.create_task(periodic_flusher())
 
     try:
         await stop.wait()
     finally:
         listener_task.cancel()
-        await asyncio.gather(listener_task, return_exceptions=True)
+        flusher_task.cancel()
+        await asyncio.gather(listener_task, flusher_task, return_exceptions=True)
         await queue.join()
         aggregator_task.cancel()
         await asyncio.gather(aggregator_task, return_exceptions=True)

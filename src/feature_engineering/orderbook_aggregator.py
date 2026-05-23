@@ -130,7 +130,7 @@ class OrderbookAggregator:
         with self._lock:
             rows = [acc.to_row() for acc in self._buckets.values() if acc.count > 0]
             self._buckets.clear()
-        self._write(rows)
+        self._write(rows, synchronous=True)
 
     def _maybe_flush(self, current_time_ms: int) -> None:
         now_bucket = _bucket_start(current_time_ms)
@@ -146,11 +146,18 @@ class OrderbookAggregator:
         self._write(to_flush)
 
     @staticmethod
-    def _write(rows: list[tuple[Any, ...]]) -> None:
+    def _write(rows: list[tuple[Any, ...]], synchronous: bool = False) -> None:
         if not rows:
             return
-        try:
-            execute_batch(INSERT_SQL, rows)
-            LOGGER.info("flushed %d orderbook snapshot(s) to DB", len(rows))
-        except Exception:
-            LOGGER.exception("failed to flush orderbook snapshots")
+
+        def run_in_background() -> None:
+            try:
+                execute_batch(INSERT_SQL, rows)
+                LOGGER.info("flushed %d orderbook snapshot(s) to DB", len(rows))
+            except Exception:
+                LOGGER.exception("failed to flush orderbook snapshots")
+
+        if synchronous:
+            run_in_background()
+        else:
+            threading.Thread(target=run_in_background, daemon=True).start()

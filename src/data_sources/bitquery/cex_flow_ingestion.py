@@ -25,7 +25,7 @@ from src.data_sources.bitquery.cex_addresses import (
     CEX_ADDRESSES_BY_NETWORK,
     TOKEN_CONTRACTS,
 )
-from src.db.db import execute_batch
+from src.db.db import execute_batch_async
 
 LOGGER = logging.getLogger("cex_flow_ingestion")
 
@@ -74,7 +74,7 @@ def _build_evm_cex_query(
           limit: {{count: 500}}
           orderBy: {{descending: Block_Time}}
           where: {{
-            Block: {{Time: {{since_relative: {{minutes_ago: 5}}}}}}
+            Block: {{Time: {{since_relative: {{minutes_ago: 10}}}}}}
             Transfer: {{
               AmountInUSD: {{gt: "100"}}
               {addr_filter}
@@ -111,7 +111,7 @@ def _build_solana_cex_query(cex_addresses: list[str], direction: str) -> str:
           limit: {{count: 500}}
           orderBy: {{descending: Block_Time}}
           where: {{
-            Block: {{Time: {{since_relative: {{minutes_ago: 5}}}}}}
+            Block: {{Time: {{since_relative: {{minutes_ago: 10}}}}}}
             Transfer: {{
               AmountInUSD: {{gt: "100"}}
               {addr_filter}
@@ -174,16 +174,32 @@ def _resolve_symbol(transfer: dict[str, Any]) -> str | None:
 # ── Aggregation ────────────────────────────────────────────────
 
 
+def _parse_block_time(tx: dict[str, Any]) -> float:
+    """Extract block time from a Bitquery transaction and return Unix epoch seconds."""
+    block = tx.get("Block", {})
+    t_str = block.get("Time", "")
+    if not t_str:
+        return time.time()
+    try:
+        t_str = t_str.replace(" ", "T").replace("Z", "+00:00")
+        if "+" not in t_str and t_str.count(":") == 2:
+            t_str += "+00:00"
+        dt = datetime.fromisoformat(t_str)
+        return dt.timestamp()
+    except (ValueError, TypeError):
+        return time.time()
+
+
 def _aggregate_by_symbol(
     transfers: list[dict[str, Any]],
     cex_addresses: set[str],
     direction: str,
-) -> dict[str, dict[str, float]]:
-    """Aggregate transfers by symbol, classifying as inflow or outflow.
+) -> dict[tuple[float, str], dict[str, float]]:
+    """Aggregate transfers by (bucket_ts, symbol), classifying as inflow or outflow.
 
-    Returns ``{symbol: {amount, usd, count}}``.
+    Returns ``{(bucket_ts, symbol): {amount, usd, count}}``.
     """
-    result: dict[str, dict[str, float]] = {}
+    result: dict[tuple[float, str], dict[str, float]] = {}
 
     for tx in transfers:
         transfer = tx.get("Transfer", {})
@@ -214,12 +230,17 @@ def _aggregate_by_symbol(
         if direction == "outflow" and receiver in cex_addresses:
             continue  # internal CEX-to-CEX
 
-        if symbol not in result:
-            result[symbol] = {"amount": 0.0, "usd": 0.0, "count": 0}
+        # True Temporal Bucketing using parsed Block.Time
+        tx_time = _parse_block_time(tx)
+        bucket_ts = tx_time - (tx_time % settings.AGGREGATION_WINDOW_SECONDS)
 
-        result[symbol]["amount"] += amount
-        result[symbol]["usd"] += amount_usd
-        result[symbol]["count"] += 1
+        key = (bucket_ts, symbol)
+        if key not in result:
+            result[key] = {"amount": 0.0, "usd": 0.0, "count": 0}
+
+        result[key]["amount"] += amount
+        result[key]["usd"] += amount_usd
+        result[key]["count"] += 1
 
     return result
 
@@ -315,15 +336,21 @@ async def _fetch_solana_direction(
 
 
 async def _poll_once() -> None:
-    """Run one CEX flow polling cycle across all configured networks."""
+    """Run one CEX flow polling cycle across all configured networks.
+    
+    Implements sliding-window bucket finalization: queries the last 10 minutes
+    of transaction history and commits ONLY the completed previous 5-minute
+    bucket. This ensures no timing-drift gaps and zero partial entry overwrites.
+    """
     now_epoch = time.time()
-    bucket_start = now_epoch - (now_epoch % settings.AGGREGATION_WINDOW_SECONDS)
-    bucket = datetime.fromtimestamp(bucket_start, tz=timezone.utc)
+    # Target exactly the previous completed 5-minute bucket
+    target_bucket_ts = now_epoch - (now_epoch % settings.AGGREGATION_WINDOW_SECONDS) - settings.AGGREGATION_WINDOW_SECONDS
+    target_bucket_dt = datetime.fromtimestamp(target_bucket_ts, tz=timezone.utc)
 
-    # Collect inflows and outflows per (network, symbol)
-    # Key: (network, symbol) → {inflow_amount, inflow_usd, inflow_count,
-    #                            outflow_amount, outflow_usd, outflow_count}
-    combined: dict[tuple[str, str], dict[str, float]] = {}
+    # Collect inflows and outflows per (bucket_ts, network, symbol)
+    # Key: (bucket_ts, network, symbol) → {inflow_amount, inflow_usd, inflow_count,
+    #                                     outflow_amount, outflow_usd, outflow_count}
+    combined: dict[tuple[float, str, str], dict[str, float]] = {}
 
     async with httpx.AsyncClient(timeout=settings.CEX_FLOW_TIMEOUT_S) as client:
         tasks = []
@@ -358,8 +385,8 @@ async def _poll_once() -> None:
             if not isinstance(result, dict):
                 continue
 
-            for symbol, agg in result.items():
-                key = (network, symbol)
+            for (bucket_ts, symbol), agg in result.items():
+                key = (bucket_ts, network, symbol)
                 if key not in combined:
                     combined[key] = {
                         "inflow_amount": 0.0, "inflow_usd": 0.0, "inflow_count": 0,
@@ -375,14 +402,18 @@ async def _poll_once() -> None:
                     combined[key]["outflow_usd"] += agg["usd"]
                     combined[key]["outflow_count"] += agg["count"]
 
-    # Build DB rows
+    # Build DB rows ONLY for the completed target bucket
     rows: list[tuple[Any, ...]] = []
-    for (network, symbol), agg in combined.items():
+    for (bucket_ts, network, symbol), agg in combined.items():
+        if bucket_ts != target_bucket_ts:
+            continue  # Discard partial current and old buckets to avoid overwrite corruption
+            
         if agg["inflow_count"] == 0 and agg["outflow_count"] == 0:
             continue
+            
         net_flow = agg["inflow_usd"] - agg["outflow_usd"]
         rows.append((
-            bucket,
+            target_bucket_dt,
             symbol,
             network,
             agg["inflow_amount"],
@@ -396,8 +427,8 @@ async def _poll_once() -> None:
 
     if rows:
         try:
-            execute_batch(INSERT_SQL, rows)
-            LOGGER.info("wrote %d cex_flow row(s) to DB", len(rows))
+            await execute_batch_async(INSERT_SQL, rows)
+            LOGGER.info("wrote %d cex_flow row(s) to DB for finalized bucket %s", len(rows), target_bucket_dt)
             for r in rows:
                 LOGGER.info(
                     "  cex_flow: %s/%s in=$%.0f(%d tx) out=$%.0f(%d tx) net=$%+.0f",
@@ -406,7 +437,7 @@ async def _poll_once() -> None:
         except Exception:
             LOGGER.exception("failed to write cex_flows to DB")
     else:
-        LOGGER.info("no CEX flow data in this 5-min cycle")
+        LOGGER.info("no CEX flow data finalized for bucket %s", target_bucket_dt)
 
 
 async def start_cex_flow_stream(stop: asyncio.Event) -> None:

@@ -339,8 +339,8 @@ async def _poll_and_score_cycle(
         if not valid_events:
             continue
 
-        # Fire the GPU exactly ONE time for the whole batch
-        batch_scores = score_texts_batched(texts_to_score)
+        # Fire the GPU exactly ONE time for the whole batch (offloaded to thread)
+        batch_scores = await asyncio.to_thread(score_texts_batched, texts_to_score)
 
         scored = 0
         for event, probs in zip(valid_events, batch_scores):
@@ -406,6 +406,18 @@ async def start_xquik_sentiment_stream(stop: asyncio.Event) -> None:
         LOGGER.info("fast-forwarding event cursors to skip old tweets")
         await _fast_forward_cursors(client, symbol_monitors)
 
+        async def periodic_flusher() -> None:
+            while not stop.is_set():
+                try:
+                    await asyncio.sleep(15.0)
+                    now_s = time.time()
+                    # Passively flushes any stale buckets whose logical end times are in the past
+                    aggregator._maybe_flush(now_s)
+                except Exception as e:
+                    LOGGER.error("error in periodic sentiment flusher: %s", e)
+
+        flusher_task = asyncio.create_task(periodic_flusher())
+
         try:
             while not stop.is_set():
                 try:
@@ -425,6 +437,8 @@ async def start_xquik_sentiment_stream(stop: asyncio.Event) -> None:
                     pass
         finally:
             LOGGER.info("pausing all keyword monitors to save credits")
+            flusher_task.cancel()
+            await asyncio.gather(flusher_task, return_exceptions=True)
             await _pause_all_monitors(client, symbol_monitors)
 
     aggregator.flush_all()

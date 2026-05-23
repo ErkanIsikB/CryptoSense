@@ -135,3 +135,50 @@ def close_pool() -> None:
             _pool.closeall()
             LOGGER.info("TimescaleDB connection pool closed")
             _pool = None
+
+
+# ── Asynchronous DB Wrappers (ThreadPool offloading + Semaphores) ────
+import asyncio
+
+_async_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    global _async_semaphore
+    if _async_semaphore is None:
+        _async_semaphore = asyncio.Semaphore(MAX_CONNECTIONS)
+    return _async_semaphore
+
+
+async def execute_query_async(
+    sql: str,
+    params: tuple[Any, ...] | None = None,
+    *,
+    commit: bool = True,
+) -> None:
+    """Execute a single SQL statement asynchronously in a thread-pool worker."""
+    async with _get_semaphore():
+        await asyncio.to_thread(execute_query, sql, params, commit=commit)
+
+
+async def execute_batch_async(
+    sql: str,
+    params_seq: Sequence[tuple[Any, ...]],
+    *,
+    page_size: int = 100,
+    commit: bool = True,
+) -> None:
+    """Execute a parameterised SQL statement for a batch of rows asynchronously."""
+    if not params_seq:
+        return
+    async with _get_semaphore():
+        await asyncio.to_thread(execute_batch, sql, params_seq, page_size=page_size, commit=commit)
+
+
+async def execute_query_fetch_async(
+    sql: str,
+    params: tuple[Any, ...] | None = None,
+) -> list[tuple[Any, ...]]:
+    """Execute a SELECT query asynchronously and return all fetched rows."""
+    async with _get_semaphore():
+        return await asyncio.to_thread(execute_query_fetch, sql, params)

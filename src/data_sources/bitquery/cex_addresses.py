@@ -72,6 +72,7 @@ CEX_ADDRESSES_BY_NETWORK: dict[str, set[str]] = {
     "eth": ETHEREUM_CEX_ADDRESSES,
     "bsc": BSC_CEX_ADDRESSES,
     "avalanche": AVALANCHE_CEX_ADDRESSES,
+    "avax": AVALANCHE_CEX_ADDRESSES,
     "solana": SOLANA_CEX_ADDRESSES,
 }
 
@@ -85,6 +86,9 @@ TOKEN_CONTRACTS: dict[str, dict[str, str]] = {
         "BNB": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",   # WBNB
     },
     "avalanche": {
+        "AVAX": "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7",  # WAVAX
+    },
+    "avax": {
         "AVAX": "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7",  # WAVAX
     },
     "solana": {

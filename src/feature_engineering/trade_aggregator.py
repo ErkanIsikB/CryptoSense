@@ -148,7 +148,7 @@ class TradeAggregator:
             rows = [acc.to_row() for acc in self._buckets.values() if acc.trade_count > 0]
             self._buckets.clear()
 
-        self._write(rows)
+        self._write(rows, synchronous=True)
 
     # ── Internal helpers ────────────────────────────────────────
 
@@ -169,11 +169,18 @@ class TradeAggregator:
         self._write(to_flush)
 
     @staticmethod
-    def _write(rows: list[tuple[Any, ...]]) -> None:
+    def _write(rows: list[tuple[Any, ...]], synchronous: bool = False) -> None:
         if not rows:
             return
-        try:
-            execute_batch(INSERT_SQL, rows)
-            LOGGER.info("flushed %d trade candle(s) to DB", len(rows))
-        except Exception:
-            LOGGER.exception("failed to flush trade candles")
+
+        def run_in_background() -> None:
+            try:
+                execute_batch(INSERT_SQL, rows)
+                LOGGER.info("flushed %d trade candle(s) to DB", len(rows))
+            except Exception:
+                LOGGER.exception("failed to flush trade candles")
+
+        if synchronous:
+            run_in_background()
+        else:
+            threading.Thread(target=run_in_background, daemon=True).start()

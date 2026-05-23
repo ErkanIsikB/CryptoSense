@@ -173,14 +173,27 @@ async def start_orderbook_stream(stop: asyncio.Event, sink: BaseSink | None = No
     if sink is None:
         sink = JsonlFileSink(OUTPUT_DIR)
 
+    async def periodic_flusher() -> None:
+        while not stop.is_set():
+            try:
+                await asyncio.sleep(15.0)
+                now_ms = int(time.time() * 1000)
+                if sink is not None and hasattr(sink, "orderbook_aggregator"):
+                    # Passively flushes any stale buckets whose logical end times are in the past
+                    sink.orderbook_aggregator._maybe_flush(now_ms)
+            except Exception as e:
+                LOGGER.error("error in periodic orderbook flusher: %s", e)
+
     listener_task = asyncio.create_task(_listen_orderbook(symbols, queue, stop))
     writer_task = asyncio.create_task(_write_orderbook(queue, stop, sink))
+    flusher_task = asyncio.create_task(periodic_flusher())
 
     try:
         await stop.wait()
     finally:
         listener_task.cancel()
-        await asyncio.gather(listener_task, return_exceptions=True)
+        flusher_task.cancel()
+        await asyncio.gather(listener_task, flusher_task, return_exceptions=True)
         await queue.join()
         writer_task.cancel()
         await asyncio.gather(writer_task, return_exceptions=True)

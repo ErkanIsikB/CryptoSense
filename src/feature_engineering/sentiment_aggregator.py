@@ -101,6 +101,8 @@ class SentimentAggregator:
     def __init__(self) -> None:
         self._buckets: dict[tuple[str, float], SentimentAccumulator] = {}
         self._lock = threading.Lock()
+        self.system_boot_time = datetime.now(timezone.utc)
+        self._last_flushed_bucket = _bucket_start(self.system_boot_time.timestamp())
 
     def add(
         self,
@@ -125,29 +127,95 @@ class SentimentAggregator:
     def flush_all(self) -> None:
         """Force-flush all open buckets (shutdown)."""
         with self._lock:
-            rows = [acc.to_row() for acc in self._buckets.values() if acc.count > 0]
+            rows = []
+            for acc in self._buckets.values():
+                if acc.bucket_ts >= self.system_boot_time.timestamp():
+                    if acc.count > 0:
+                        rows.append(acc.to_row())
+                    else:
+                        bucket_dt = datetime.fromtimestamp(acc.bucket_ts, tz=timezone.utc)
+                        rows.append((
+                            bucket_dt,
+                            acc.symbol,
+                            0.0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            None,
+                            None,
+                            None
+                        ))
             self._buckets.clear()
-        self._write(rows)
+        self._write(rows, synchronous=True)
 
     def _maybe_flush(self, current_time_s: float) -> None:
         now_bucket = _bucket_start(current_time_s)
         to_flush: list[tuple[Any, ...]] = []
 
         with self._lock:
+            # Union configured tokens with core assets to ensure no anomaly-engine feeds are skipped
+            tracked_tokens = settings.ENABLED_TOKENS | {"BTC", "ETH", "SOL", "BNB", "AVAX"}
+
+            # 1. Determine which bucket timestamps are fully completed and flush them
+            t = self._last_flushed_bucket + WINDOW_S
+            while t < now_bucket:
+                # Generate a row for every tracked symbol
+                for symbol in tracked_tokens:
+                    key = (symbol, t)
+                    acc = self._buckets.pop(key, None)
+                    if acc is not None and acc.count > 0:
+                        to_flush.append(acc.to_row())
+                    else:
+                        # Falling back to a 0-tweet record
+                        bucket_dt = datetime.fromtimestamp(t, tz=timezone.utc)
+                        to_flush.append((
+                            bucket_dt,
+                            symbol,
+                            0.0,  # avg_score
+                            0,    # tweet_count
+                            0,    # positive_count
+                            0,    # negative_count
+                            0,    # neutral_count
+                            None, # max_score
+                            None, # min_score
+                            None  # sample_tweet
+                        ))
+                t += WINDOW_S
+            
+            # Update last flushed bucket to the latest completed bucket
+            if now_bucket - WINDOW_S > self._last_flushed_bucket:
+                self._last_flushed_bucket = now_bucket - WINDOW_S
+
+            # 2. Extract late-arriving tweets for already completed buckets, and pop/discard pre-boot stale buckets
+            first_valid_bucket = _bucket_start(self.system_boot_time.timestamp()) + WINDOW_S
             stale_keys = [k for k in self._buckets if k[1] < now_bucket]
             for key in stale_keys:
-                acc = self._buckets.pop(key)
-                if acc.count > 0:
-                    to_flush.append(acc.to_row())
+                bucket_ts = key[1]
+                if bucket_ts >= first_valid_bucket:
+                    # Flush late-arriving tweet accumulations to overwrite the 0-tweet fallback row
+                    acc = self._buckets.pop(key)
+                    if acc.count > 0:
+                        to_flush.append(acc.to_row())
+                else:
+                    # Pre-boot bucket is truncated/distorted, pop and discard it
+                    self._buckets.pop(key, None)
 
         self._write(to_flush)
 
     @staticmethod
-    def _write(rows: list[tuple[Any, ...]]) -> None:
+    def _write(rows: list[tuple[Any, ...]], synchronous: bool = False) -> None:
         if not rows:
             return
-        try:
-            execute_batch(INSERT_SQL, rows)
-            LOGGER.info("flushed %d tweet sentiment bucket(s) to DB", len(rows))
-        except Exception:
-            LOGGER.exception("failed to flush tweet sentiment buckets")
+
+        def run_in_background() -> None:
+            try:
+                execute_batch(INSERT_SQL, rows)
+                LOGGER.info("flushed %d tweet sentiment bucket(s) to DB", len(rows))
+            except Exception:
+                LOGGER.exception("failed to flush tweet sentiment buckets")
+
+        if synchronous:
+            run_in_background()
+        else:
+            threading.Thread(target=run_in_background, daemon=True).start()

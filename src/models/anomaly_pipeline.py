@@ -2,100 +2,97 @@ import asyncio
 import logging
 import json
 import os
+import time
 from pathlib import Path
 
 import torch
 import pandas as pd
 import numpy as np
 
-from src.db.db import execute_query_fetch, execute_query
+from src.db.db import execute_query_fetch_async, execute_query_async
 from src.models.lstm_autoencoder import LSTMAutoencoder
 
 LOGGER = logging.getLogger("anomaly_pipeline")
 
-# The Fleet of coins you want to monitor
 TRACKED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "AVAXUSDT"]
 
 SEQ_LEN = 12
 INPUT_DIM = 18
 LATENT_DIM = 10
-ANOMALY_THRESHOLD = 0.008  # Bumped slightly to account for healthy live volatility
+ANOMALY_THRESHOLD = 0.008
 
 PROJECT_ROOT = Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 WEIGHTS_DIR = PROJECT_ROOT / "src" / "models" / "saved_weights"
 
-# Upgraded SQL to handle the USDT vs Base Symbol mismatch natively
 SQL_FETCH_LATEST = """
-                   SELECT COALESCE(t.bucket, o.bucket, s.bucket, c.bucket) AS final_bucket, \
-                          COALESCE(t.open, 0.0) as open, 
-    COALESCE(t.high, 0.0) as high, 
-    COALESCE(t.low, 0.0) as low, 
-    COALESCE(t.close, 0.0) as close, 
-    COALESCE(t.volume, 0.0) as volume, 
-    COALESCE(t.trade_count, 0) as trade_count, 
-    COALESCE(t.net_trade, 0.0) as net_trade, 
-    COALESCE(t.vwap, 0.0) as vwap,
-    COALESCE(o.avg_spread, 0.0) as avg_spread, 
-    COALESCE(o.avg_mid_price, 0.0) as avg_mid_price, 
-    COALESCE(o.avg_bid_depth, 0.0) as avg_bid_depth, 
-    COALESCE(o.avg_ask_depth, 0.0) as avg_ask_depth, 
-    COALESCE(o.avg_imbalance, 0.0) as avg_imbalance,
-    COALESCE(s.avg_score, 0.0) as avg_score, 
-    COALESCE(s.tweet_count, 0) as tweet_count, 
-    COALESCE(s.positive_count, 0) as positive_count, 
-    COALESCE(s.negative_count, 0) as negative_count,
-    COALESCE(c.net_flow_usd, 0.0) as net_flow_usd
-                   FROM trade_candles_5m t
-                       FULL OUTER JOIN orderbook_snapshots_5m o
-                   ON t.bucket = o.bucket AND t.symbol = o.symbol
-                       FULL OUTER JOIN tweet_sentiment_5m s
-                       ON COALESCE (t.bucket, o.bucket) = s.bucket
-                       AND REPLACE(COALESCE (t.symbol, o.symbol), 'USDT', '') = s.symbol
-                       FULL OUTER JOIN (
-                       SELECT bucket, symbol, SUM (net_flow_usd) as net_flow_usd
-                       FROM cex_flows_5m
-                       GROUP BY bucket, symbol
-                       ) c
-                       ON COALESCE (t.bucket, o.bucket, s.bucket) = c.bucket
-                       AND REPLACE(COALESCE (t.symbol, o.symbol), 'USDT', '') = c.symbol
-                   WHERE COALESCE (t.symbol \
-                       , o.symbol) = %s
-                      OR s.symbol = %s
-                      OR c.symbol = %s
-                      AND COALESCE(t.bucket, o.bucket, s.bucket, c.bucket) < NOW() - INTERVAL '6 minutes' 
-                   ORDER BY final_bucket DESC
-                       LIMIT %s; \
-                   """
+WITH finalized_buckets AS (
+    SELECT bucket, symbol FROM trade_candles_5m
+    INTERSECT
+    SELECT bucket, symbol FROM orderbook_snapshots_5m
+    INTERSECT
+    SELECT bucket, symbol || 'USDT' AS symbol FROM tweet_sentiment_5m
+)
+SELECT 
+    fb.bucket AS final_bucket,
+    t.open, 
+    t.high, 
+    t.low, 
+    t.close, 
+    t.volume, 
+    t.trade_count, 
+    t.net_trade, 
+    t.vwap,
+    o.avg_spread, 
+    o.avg_mid_price, 
+    o.avg_bid_depth, 
+    o.avg_ask_depth, 
+    o.avg_imbalance,
+    s.avg_score, 
+    s.tweet_count, 
+    s.positive_count, 
+    s.negative_count,
+    COALESCE(c.net_flow_usd, 0.0) AS net_flow_usd
+FROM finalized_buckets fb
+JOIN trade_candles_5m t ON t.bucket = fb.bucket AND t.symbol = fb.symbol
+JOIN orderbook_snapshots_5m o ON o.bucket = fb.bucket AND o.symbol = fb.symbol
+JOIN tweet_sentiment_5m s ON s.bucket = fb.bucket AND s.symbol = REPLACE(fb.symbol, 'USDT', '')
+LEFT JOIN (
+    SELECT bucket, symbol, SUM(net_flow_usd) as net_flow_usd 
+    FROM cex_flows_5m 
+    GROUP BY bucket, symbol
+) c ON c.bucket = fb.bucket AND c.symbol = REPLACE(fb.symbol, 'USDT', '')
+WHERE fb.symbol = %s
+ORDER BY final_bucket DESC
+LIMIT %s;
+"""
 
-
-def fetch_and_scale_latest_window(target_symbol: str, base_symbol: str, scaler_params: dict) -> tuple[
-    torch.Tensor | None, dict | None]:
-    """Fetches the last hour of data for a specific coin and applies its unique scaler."""
-    rows = execute_query_fetch(SQL_FETCH_LATEST, (target_symbol, base_symbol, base_symbol, SEQ_LEN))
+async def fetch_and_scale_latest_window(target_symbol: str, base_symbol: str, scaler_params: dict) -> tuple[torch.Tensor | None, dict | None]:
+    rows = await execute_query_fetch_async(SQL_FETCH_LATEST, (target_symbol, SEQ_LEN))
 
     if not rows or len(rows) < SEQ_LEN:
+        LOGGER.warning(f"📭 Not enough history in DB for {target_symbol} yet. Need {SEQ_LEN} rows, got {len(rows) if rows else 0}. Skipping.")
         return None, None
 
-    rows = rows[::-1]  # Reverse to chronological order
-
-    columns = ["bucket"] + scaler_params["features"]
-    df = pd.DataFrame(rows, columns=columns)
+    rows = rows[::-1]
+    sql_columns = [
+        "bucket", "open", "high", "low", "close", "volume", "trade_count",
+        "net_trade", "vwap", "avg_spread", "avg_mid_price", "avg_bid_depth",
+        "avg_ask_depth", "avg_imbalance", "avg_score", "tweet_count",
+        "positive_count", "negative_count", "net_flow_usd"
+    ]
+    df = pd.DataFrame(rows, columns=sql_columns)
     df["bucket"] = pd.to_datetime(df["bucket"], utc=True)
 
-    if not rows or len(rows) < SEQ_LEN:
-        LOGGER.warning(
-            f"📭 Not enough history in DB for {target_symbol} yet. Need {SEQ_LEN} rows, got {len(rows) if rows else 0}. Skipping.")
-        return None, None
-    # Check for downtime gaps
+    # Safely reorder columns to match scaler JSON feature mapping exactly
+    df = df[["bucket"] + scaler_params["features"]]
+
     time_diffs = df["bucket"].diff().dropna()
     if (time_diffs > pd.Timedelta(minutes=5)).any():
-        LOGGER.warning(
-            f"⏳ Data timeline gap detected for {target_symbol} in the last hour. Skipping inference until timeline heals.")
+        LOGGER.warning(f"⏳ Data timeline gap detected for {target_symbol} in the last hour. Skipping inference until timeline heals.")
         return None, None
 
     latest_data_dict = df.iloc[-1].to_dict()
 
-    # Apply unique MinMax Math for this specific coin
     df_scaled = df.copy()
     for col in scaler_params["features"]:
         min_v = scaler_params["mins"][col]
@@ -108,13 +105,17 @@ def fetch_and_scale_latest_window(target_symbol: str, base_symbol: str, scaler_p
 
     return input_tensor, latest_data_dict
 
+def run_model_inference(model: LSTMAutoencoder, input_tensor: torch.Tensor) -> float:
+    with torch.no_grad():
+        reconstructed = model(input_tensor)
+        mse = torch.mean((input_tensor - reconstructed) ** 2).item()
+    return mse
+
 
 async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
     LOGGER.info("Starting Multi-Coin AI Anomaly Detection Engine...")
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # --- Load all models into RAM at startup ---
     models_cache = {}
     scalers_cache = {}
 
@@ -127,11 +128,9 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
             LOGGER.error(f"Missing weights for {symbol}. Skipping this coin.")
             continue
 
-        # Load Scaler
         with open(scaler_path, "r", encoding="utf-8") as f:
             scalers_cache[symbol] = json.load(f)
 
-        # Load PyTorch Model
         model = LSTMAutoencoder(input_dim=INPUT_DIM, hidden_dim=LATENT_DIM, seq_len=SEQ_LEN)
         model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         model.to(device)
@@ -142,14 +141,13 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
         LOGGER.error("No models loaded. Shutting down anomaly pipeline.")
         return
 
-    # --- Live Inference Loop ---
     while not stop_event.is_set():
         try:
-            # Loop through every tracked coin
+            # 1. Execute inference across all models in high-speed succession
             for target_symbol in models_cache.keys():
                 base_symbol = target_symbol.replace("USDT", "")
 
-                input_tensor, latest_data = fetch_and_scale_latest_window(
+                input_tensor, latest_data = await fetch_and_scale_latest_window(
                     target_symbol, base_symbol, scalers_cache[target_symbol]
                 )
 
@@ -159,10 +157,8 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
                 input_tensor = input_tensor.to(device)
                 model = models_cache[target_symbol]
 
-                # Run Neural Network
-                with torch.no_grad():
-                    reconstructed = model(input_tensor)
-                    mse = torch.mean((input_tensor - reconstructed) ** 2).item()
+                # Offload PyTorch inference computation to a worker thread
+                mse = await asyncio.to_thread(run_model_inference, model, input_tensor)
 
                 is_anomaly = mse > ANOMALY_THRESHOLD
 
@@ -171,7 +167,6 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
                 else:
                     LOGGER.info(f"{target_symbol} heartbeat normal. MSE: {mse:.6f}")
 
-                # Format LLM Payload
                 llm_payload = {
                     "timestamp": latest_data["bucket"].isoformat(),
                     "symbol": target_symbol,
@@ -199,28 +194,33 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
                     "AI_ENGINE": {
                         "reconstruction_error": round(mse, 6),
                         "is_statistical_anomaly": is_anomaly,
-                        "severity": "CRITICAL" if mse > (
-                                    ANOMALY_THRESHOLD * 2) else "HIGH" if is_anomaly else "NORMAL"
+                        "severity": "CRITICAL" if mse > (ANOMALY_THRESHOLD * 2) else "HIGH" if is_anomaly else "NORMAL"
                     }
                 }
 
-                # Save to Database
                 insert_sql = """
                              INSERT INTO ai_anomalies_5m
                                  (bucket, symbol, mse_score, is_anomaly, severity, llm_payload)
-                             VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (bucket, symbol) DO \
-                             UPDATE \
-                                 SET mse_score = EXCLUDED.mse_score, \
-                                 is_anomaly = EXCLUDED.is_anomaly, \
-                                 severity = EXCLUDED.severity, \
-                                 llm_payload = EXCLUDED.llm_payload; \
+                             VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (bucket, symbol) DO UPDATE 
+                                 SET mse_score = EXCLUDED.mse_score,
+                                 is_anomaly = EXCLUDED.is_anomaly,
+                                 severity = EXCLUDED.severity,
+                                 llm_payload = EXCLUDED.llm_payload;
                              """
-                execute_query(insert_sql, (
+                await execute_query_async(insert_sql, (
                     latest_data["bucket"], base_symbol, mse, is_anomaly,
                     llm_payload["AI_ENGINE"]["severity"], json.dumps(llm_payload)
                 ))
 
-            await asyncio.sleep(300)  # Wake up every 5 minutes
+            # 2. Outdent Alignment Sleep (Runs exactly once AFTER processing all 5 coins)
+            current_time = time.time()
+            seconds_until_next_bucket = 300 - (current_time % 300)
+            
+            # Bump padding from + 5 to + 25 to allow slower NLP and CEX poller tasks to settle
+            adaptive_sleep_duration = seconds_until_next_bucket + 25
+
+            LOGGER.info(f"⏰ Syncing radar array. Sleeping for {int(adaptive_sleep_duration)}s until next uncorrupted database mark.")
+            await asyncio.sleep(adaptive_sleep_duration)
 
         except asyncio.CancelledError:
             break

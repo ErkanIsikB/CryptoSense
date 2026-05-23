@@ -72,9 +72,11 @@ graph TD
 ```
 
 ### Dynamic Ingestion & Machine Learning Loops
-1. **Pipeline Execution**: Live trades (Binance), orderbook snapshot averages, sentiment models (XQuik/FinBERT), and exchange transfers are continuously aggregated into 5-minute buckets and committed directly to TimescaleDB.
-2. **AI Anomaly Engine**: Every 5 minutes, the engine queries the database, constructs a chronological 1-hour window (12 sequential 5-minute buckets) of 19 market and sentiment features, scales the metrics dynamically via trained MinMax scaling matrices, and inputs them into coin-specific LSTM Autoencoder models.
-3. **Statistical Outliers**: Reconstruction loss (MSE) is evaluated against a tuned volatility threshold. Severe errors trigger warnings and generate structured JSON payloads containing localized contextual states for instantaneous consumption by LLM agents.
+1. **Pipeline Execution & Thread Offloading**: Live trades (Binance), orderbook snapshot averages, sentiment models (XQuik/FinBERT), and exchange transfers are continuously aggregated into 5-minute buckets and committed directly to TimescaleDB. All synchronous database flushes and heavy deep learning scoring (FinBERT & PyTorch LSTM) are offloaded to background threads and daemon tasks, keeping the `asyncio` event loop 100% fluid and non-blocking.
+2. **Dynamic DB CTE Barrier Sync & CEX Flow LEFT JOIN**: To prevent partial or "ghost" data entries from corrupting model normalization, the Anomaly Engine queries using a strict 3-table `INTERSECT` CTE barrier across high-frequency feeds (`trade_candles_5m`, `orderbook_snapshots_5m`, and `tweet_sentiment_5m`). The lower-frequency on-chain CEX flows (`cex_flows_5m`) are joined optionally via a `LEFT JOIN` and wrapped in `COALESCE` to default missing metrics to `0.0`. This ensures absolute timeline alignment without locking out anomaly detection during periods of transfer sparsity (e.g. for AVAX, whose exchange transfers are tracked as wrapped/pegged tokens on BSC and Ethereum).
+3. **Thread-Safe Pooling & Teardown Security**: Database operations are protected by thread-safe PgPool async query wrappers guarded by an `asyncio.Semaphore(10)` matched to database pool limits. Teardown lifecycles implement a top-down closing hierarchy with a 1.0s settling grace period and synchronous shutdown flushes to prevent psycopg2 pool errors and preserve final in-RAM data buckets.
+4. **AI Anomaly Engine**: Every 5 minutes, the engine queries the database, constructs a chronological 1-hour window (12 sequential 5-minute buckets) of 19 market and sentiment features. It maps database fields explicitly by column name to avoid positional scaling corruption, scales the metrics dynamically via trained MinMax matrices, and inputs them into coin-specific LSTM Autoencoder models.
+5. **Statistical Outliers**: Reconstruction loss (MSE) is evaluated against a tuned volatility threshold. Severe errors trigger warnings and generate structured JSON payloads containing localized contextual states for instantaneous consumption by LLM agents.
 
 ---
 
@@ -93,7 +95,7 @@ CryptoSense implements a dual-method data extraction pipeline to optimize both r
 
 ### 3. On-Chain Exchange & Whale Flow (Bitquery GraphQL v2)
 Bitquery integration is heavily optimized using both HTTP polling and subscription mechanisms:
-- **CEX Flow Ingestion (`cex_flow_ingestion.py`)**: Runs every 5 minutes using HTTP GraphQL POSTs to compile aggregate exchange inflows and outflows for Ethereum, BSC, and Solana using predefined CEX hot-wallet coordinates.
+- **CEX Flow Ingestion (`cex_flow_ingestion.py`)**: Runs every 5 minutes using HTTP GraphQL POSTs to compile aggregate exchange inflows and outflows for Ethereum, BSC, and Solana (`CEX_FLOW_NETWORKS=eth,bsc,solana`) using predefined CEX hot-wallet coordinates. Wrapped and pegged AVAX exchange flows (e.g. Binance-Peg AVAX on BSC, WAVAX on Ethereum) are tracked dynamically within the active BSC and Ethereum streams, conserving API limits while preserving model richness.
 - **WebSocket Whale Trades (`ws_whale_trades.py`)**: Real-time subscription to DEX trades exceeding $100,000 in volume for our tracked assets.
 - **WebSocket Transfer Streams (`ws_evm_transfers.py` & `ws_solana_transfers.py`)**: Real-time subscription to large transfers (> $100,000) for Ethereum/EVM and Solana networks.
 - **Optimized Polling (`http_polling.py`)**: Periodic REST polling (5-minute interval) for BSC and Avalanche transfers to bypass WebSocket stream limits and conserve valuable API credits.
@@ -238,6 +240,7 @@ CryptoSense/
 │   ├── check_live_data.py            # Diagnostic script to print the latest DB entries
 │   ├── clean_jsonl.py                # Local JSONL file cleanup helper
 │   ├── cleanup_test_data.py          # Development cleanup utility
+│   ├── inspect_payload.py            # Utility to pretty-print the latest live anomaly LLM payload from TimescaleDB
 │   ├── run_migration.py              # Standalone migration script
 │   ├── test_bitquery_usage.py        # Connection and query validator for Bitquery APIs
 │   ├── test_integration.py           # Pipelines integration test pushing mock data
@@ -379,7 +382,7 @@ SELECT
     o.avg_imbalance AS orderbook_imbalance,
     s.avg_score AS sentiment_score,
     s.tweet_count AS total_tweets,
-    c.net_flow_usd AS net_wallet_flow,
+    COALESCE(c.net_flow_usd, 0.0) AS net_wallet_flow,
     a.is_anomaly AS ai_anomaly_detected,
     a.mse_score AS autoencoder_loss
 FROM trade_candles_5m t
@@ -410,7 +413,7 @@ LIMIT 10;
 | **ETH** | `ETHUSDT` | ✅ | ✅ | ✅ | `ethereum`, `bsc` | ✅ |
 | **SOL** | `SOLUSDT` | ✅ | ✅ | ✅ | `solana` | ✅ |
 | **BNB** | `BNBUSDT` | ✅ | ✅ | ✅ | `bsc` | ✅ |
-| **AVAX** | `AVAXUSDT` | ✅ | ✅ | ✅ | `avalanche` | ✅ |
+| **AVAX** | `AVAXUSDT` | ✅ | ✅ | ✅ | `bsc`, `ethereum` (wrapped) | ✅ |
 
 ---
 

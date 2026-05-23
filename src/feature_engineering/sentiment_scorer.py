@@ -96,17 +96,19 @@ def compound_score(probs: dict[str, float]) -> float:
 # ── Public API ─────────────────────────────────────────────────
 
 INSERT_SQL = """
-INSERT INTO sentiment_scores
-    (time, symbol, score, article_count, positive_ratio,
-     negative_ratio, avg_relevance, top_headline)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-ON CONFLICT (time, symbol) DO UPDATE SET
-    score          = EXCLUDED.score,
-    article_count  = EXCLUDED.article_count,
-    positive_ratio = EXCLUDED.positive_ratio,
-    negative_ratio = EXCLUDED.negative_ratio,
-    avg_relevance  = EXCLUDED.avg_relevance,
-    top_headline   = EXCLUDED.top_headline;
+INSERT INTO tweet_sentiment_5m
+    (bucket, symbol, avg_score, tweet_count, positive_count,
+     negative_count, neutral_count, max_score, min_score, sample_tweet)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+ON CONFLICT (bucket, symbol) DO UPDATE SET
+    avg_score      = EXCLUDED.avg_score,
+    tweet_count    = EXCLUDED.tweet_count,
+    positive_count = EXCLUDED.positive_count,
+    negative_count = EXCLUDED.negative_count,
+    neutral_count  = EXCLUDED.neutral_count,
+    max_score      = EXCLUDED.max_score,
+    min_score      = EXCLUDED.min_score,
+    sample_tweet   = EXCLUDED.sample_tweet;
 """
 
 
@@ -150,12 +152,13 @@ def score_and_store(record: dict[str, Any]) -> None:
     # 3. Calculate the math
     positive_count = 0
     negative_count = 0
-    relevance_sum = 0.0
+    neutral_count = 0
+    max_score = -999.0
+    min_score = 999.0
     compound_sum = 0.0
-    top_headline = ""
-    top_relevance = 0.0
+    sample_tweet = ""
+    top_relevance = -1.0
 
-    # zip() lets us loop through the original items and our new scores side-by-side
     for item, probs in zip(valid_items, batch_scores):
         compound = compound_score(probs)
         compound_sum += compound
@@ -164,42 +167,45 @@ def score_and_store(record: dict[str, Any]) -> None:
             positive_count += 1
         elif compound < -0.1:
             negative_count += 1
+        else:
+            neutral_count += 1
+
+        max_score = max(max_score, compound)
+        min_score = min(min_score, compound)
 
         relevance = float(item.get("score") or 0.0)
-        relevance_sum += relevance
-
-        title = str(item.get("title") or "")
+        content = str(item.get("content") or "")
         if relevance > top_relevance:
             top_relevance = relevance
-            top_headline = title
+            sample_tweet = content
 
     n = len(valid_items)
     avg_compound = compound_sum / n if n > 0 else 0.0
-    positive_ratio = positive_count / n if n > 0 else 0.0
-    negative_ratio = negative_count / n if n > 0 else 0.0
-    avg_relevance = relevance_sum / n if n > 0 else 0.0
 
     row = (
         ts,
         symbol,
         round(avg_compound, 6),
         n,
-        round(positive_ratio, 4),
-        round(negative_ratio, 4),
-        round(avg_relevance, 4),
-        top_headline[:500] if top_headline else None,
+        positive_count,
+        negative_count,
+        neutral_count,
+        round(max_score, 6) if max_score != -999.0 else None,
+        round(min_score, 6) if min_score != 999.0 else None,
+        sample_tweet[:500] if sample_tweet else None,
     )
 
     # noinspection PyBroadException
     try:
         execute_query(INSERT_SQL, row)
         LOGGER.info(
-            "sentiment scored: symbol=%s score=%.4f articles=%d pos=%.0f%% neg=%.0f%%",
+            "sentiment scored and saved: symbol=%s avg_score=%.4f articles=%d pos=%d neg=%d neu=%d",
             symbol,
             avg_compound,
             n,
-            positive_ratio * 100,
-            negative_ratio * 100,
+            positive_count,
+            negative_count,
+            neutral_count,
         )
     except Exception:
         LOGGER.exception("failed to write sentiment score for %s", symbol)
