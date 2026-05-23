@@ -1,58 +1,79 @@
-"""Check what's in all tables right now."""
+"""Check what's in all tables right now, including the AI Anomaly Engine data."""
 import sys
 import os
+import json
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.db.db import execute_query_fetch, close_pool
 
 if __name__ == "__main__":
     try:
-        # Tweet sentiment (5-min buckets from XQuik)
+        # 1. Tweet sentiment (5-min buckets from XQuik)
         rows = execute_query_fetch("""
             SELECT bucket, symbol, avg_score, tweet_count,
                    positive_count, negative_count, neutral_count,
                    max_score, min_score, LEFT(sample_tweet, 60) as sample
             FROM tweet_sentiment_5m
             ORDER BY bucket DESC
-            LIMIT 15;
+            LIMIT 5;
         """)
         print(f"\n🐦 tweet_sentiment_5m ({len(rows)} rows):")
         for r in rows:
             print(f"  {r[0]} | {r[1]:5s} | avg={r[2]:+.4f} | tweets={r[3]:3d} | +{r[4]} -{r[5]} ~{r[6]} | max={r[7]:+.4f} min={r[8]:+.4f} | {r[9]}")
 
-        # Trade candles
+        # 2. Trade candles
         rows = execute_query_fetch("""
             SELECT bucket, symbol, open, high, low, close, volume, trade_count, net_trade, vwap
             FROM trade_candles_5m
             ORDER BY bucket DESC
-            LIMIT 10;
+            LIMIT 5;
         """)
         print(f"\n📊 trade_candles_5m ({len(rows)} rows):")
         for r in rows:
             print(f"  {r[0]} | {r[1]:10s} | O={r[2]:.2f} H={r[3]:.2f} L={r[4]:.2f} C={r[5]:.2f} | V={r[6]:.4f} trades={r[7]} net={r[8]:+.4f} vwap={r[9]:.2f}")
 
-        # Orderbook
+        # 3. Orderbook
         rows = execute_query_fetch("""
             SELECT bucket, symbol, avg_spread, avg_mid_price, avg_bid_depth, avg_ask_depth, avg_imbalance, snapshot_count
             FROM orderbook_snapshots_5m
             ORDER BY bucket DESC
-            LIMIT 10;
+            LIMIT 5;
         """)
         print(f"\n📊 orderbook_snapshots_5m ({len(rows)} rows):")
         for r in rows:
             print(f"  {r[0]} | {r[1]:10s} | spread={r[2]:.4f} mid={r[3]:.2f} bid_d={r[4]:.2f} ask_d={r[5]:.2f} imb={r[6]:+.4f} snaps={r[7]}")
 
-        # CEX flows
+        # 4. CEX flows
         rows = execute_query_fetch("""
             SELECT bucket, symbol, network, inflow_usd, outflow_usd, net_flow_usd, inflow_tx_count, outflow_tx_count
             FROM cex_flows_5m
             ORDER BY bucket DESC
-            LIMIT 10;
+            LIMIT 5;
         """)
         print(f"\n📊 cex_flows_5m ({len(rows)} rows):")
         for r in rows:
             print(f"  {r[0]} | {r[1]:5s} | {r[2]:10s} | in=${r[3]:,.0f} out=${r[4]:,.0f} net=${r[5]:+,.0f} | in_tx={r[6]} out_tx={r[7]}")
+
+        # 5. NEW: AI Anomalies Engine Outputs
+        rows = execute_query_fetch("""
+            SELECT bucket, symbol, mse_score, is_anomaly, severity, llm_payload
+            FROM ai_anomalies_5m
+            ORDER BY bucket DESC, symbol ASC
+            LIMIT 5;
+        """)
+        print(f"\n🧠 ai_anomalies_5m ({len(rows)} rows):")
+        for r in rows:
+            status_emoji = "🚨" if r[3] else "🟢"
+            print(f"  {status_emoji} {r[0]} | {r[1]:5s} | MSE={r[2]:.6f} | severity={r[4]:8s}")
+
+            # Unpack and verify the structural validity of the saved JSON string
+            if r[5]:
+                try:
+                    payload_dict = r[5] if isinstance(r[5], dict) else json.loads(r[5])
+                    print(f"     ↳ Verification Payload Extract: Close=${payload_dict['market_data']['close_price']} | Sentiment Avg Score={payload_dict['sentiment']['avg_score']}")
+                except Exception as json_err:
+                    print(f"     ↳ ❌ Error parsing JSONB column: {json_err}")
 
     except Exception as e:
         print(f"❌ Error: {e}")

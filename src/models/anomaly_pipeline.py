@@ -17,7 +17,7 @@ LOGGER = logging.getLogger("anomaly_pipeline")
 TRACKED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "AVAXUSDT"]
 
 SEQ_LEN = 12
-INPUT_DIM = 19
+INPUT_DIM = 18
 LATENT_DIM = 10
 ANOMALY_THRESHOLD = 0.008  # Bumped slightly to account for healthy live volatility
 
@@ -62,6 +62,7 @@ SQL_FETCH_LATEST = """
                        , o.symbol) = %s
                       OR s.symbol = %s
                       OR c.symbol = %s
+                      AND COALESCE(t.bucket, o.bucket, s.bucket, c.bucket) < NOW() - INTERVAL '6 minutes' 
                    ORDER BY final_bucket DESC
                        LIMIT %s; \
                    """
@@ -81,10 +82,15 @@ def fetch_and_scale_latest_window(target_symbol: str, base_symbol: str, scaler_p
     df = pd.DataFrame(rows, columns=columns)
     df["bucket"] = pd.to_datetime(df["bucket"], utc=True)
 
+    if not rows or len(rows) < SEQ_LEN:
+        LOGGER.warning(
+            f"📭 Not enough history in DB for {target_symbol} yet. Need {SEQ_LEN} rows, got {len(rows) if rows else 0}. Skipping.")
+        return None, None
     # Check for downtime gaps
     time_diffs = df["bucket"].diff().dropna()
     if (time_diffs > pd.Timedelta(minutes=5)).any():
-        LOGGER.warning(f"Data gap detected for {target_symbol}. Skipping inference.")
+        LOGGER.warning(
+            f"⏳ Data timeline gap detected for {target_symbol} in the last hour. Skipping inference until timeline heals.")
         return None, None
 
     latest_data_dict = df.iloc[-1].to_dict()
@@ -139,8 +145,6 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
     # --- Live Inference Loop ---
     while not stop_event.is_set():
         try:
-            await asyncio.sleep(300)  # Wake up every 5 minutes
-
             # Loop through every tracked coin
             for target_symbol in models_cache.keys():
                 base_symbol = target_symbol.replace("USDT", "")
@@ -215,6 +219,8 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
                     latest_data["bucket"], base_symbol, mse, is_anomaly,
                     llm_payload["AI_ENGINE"]["severity"], json.dumps(llm_payload)
                 ))
+
+            await asyncio.sleep(300)  # Wake up every 5 minutes
 
         except asyncio.CancelledError:
             break
