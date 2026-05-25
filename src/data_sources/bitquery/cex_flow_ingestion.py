@@ -253,7 +253,7 @@ async def _fetch_evm_direction(
     network: str,
     cex_addresses: list[str],
     direction: str,
-) -> dict[str, dict[str, float]]:
+) -> dict[tuple[float, str], dict[str, float]]:
     """Fetch and aggregate EVM transfers for one direction."""
     query = _build_evm_cex_query(network, cex_addresses, direction)
     headers = {
@@ -296,7 +296,7 @@ async def _fetch_solana_direction(
     client: httpx.AsyncClient,
     cex_addresses: list[str],
     direction: str,
-) -> dict[str, dict[str, float]]:
+) -> dict[tuple[float, str], dict[str, float]]:
     """Fetch and aggregate Solana transfers for one direction."""
     query = _build_solana_cex_query(cex_addresses, direction)
     headers = {
@@ -434,26 +434,37 @@ async def _poll_once() -> None:
                     "  cex_flow: %s/%s in=$%.0f(%d tx) out=$%.0f(%d tx) net=$%+.0f",
                     r[2], r[1], r[4], r[8], r[6], r[9], r[7],
                 )
-        except Exception:
+        except Exception:  # noqa: E722
             LOGGER.exception("failed to write cex_flows to DB")
     else:
         LOGGER.info("no CEX flow data finalized for bucket %s", target_bucket_dt)
 
 
 async def start_cex_flow_stream(stop: asyncio.Event) -> None:
-    """Public entry point — polls Bitquery for CEX flows every 5 minutes."""
-    LOGGER.info("CEX flow ingestion started (poll every %ds)", settings.CEX_FLOW_POLL_INTERVAL_S)
+    """Public entry point — polls Bitquery for CEX flows every 5 minutes on the clock boundary."""
+    LOGGER.info("CEX flow ingestion started (aligned to 5-minute clock boundary)")
 
     while not stop.is_set():
+        current_time = time.time()
+        seconds_until_next_bucket = 300 - (current_time % 300)
+        # Target exactly 5 seconds past the 5-minute boundary
+        adaptive_sleep_duration = seconds_until_next_bucket + 5
+
+        LOGGER.info(
+            f"⏰ CEX flow poller syncing. Sleeping for {int(adaptive_sleep_duration)}s until next boundary mark."
+        )
+
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=adaptive_sleep_duration)
+        except asyncio.TimeoutError:
+            pass  # Normal timeout — proceed to execution
+        
+        if stop.is_set():
+            break
+
         try:
             await _poll_once()
-        except Exception:
+        except Exception:  # noqa: E722
             LOGGER.exception("cex flow poll cycle failed")
-
-        # Wait for next cycle or until stopped
-        try:
-            await asyncio.wait_for(stop.wait(), timeout=settings.CEX_FLOW_POLL_INTERVAL_S)
-        except asyncio.TimeoutError:
-            pass  # normal — poll again
 
     LOGGER.info("CEX flow ingestion stopped")
