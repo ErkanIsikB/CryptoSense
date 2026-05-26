@@ -17,3 +17,9 @@ websockets==16.0
 psycopg2-binary==2.9.12
 python-dotenv==1.2.2
 schedule==1.2.2
+
+# -- FastAPI Web Backend & Dashboard --
+ollama>=0.4.4
+fastapi>=0.115.8
+uvicorn>=0.34.0
+streamlit>=1.54.0
