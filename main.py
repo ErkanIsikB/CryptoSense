@@ -21,6 +21,7 @@ from src.data_sources.xquik.xquik_ingestion import start_xquik_sentiment_stream
 from src.data_sources.bitquery.cex_flow_ingestion import start_cex_flow_stream
 
 from src.models.anomaly_pipeline import start_anomaly_stream
+from src.models.llm_pipeline import start_llm_decision_stream
 
 from src.sinks.timescale_sink import TimescaleSink
 from src.db.db import run_migration, close_pool
@@ -103,6 +104,16 @@ async def _run_all() -> None:
         tasks.append(anomaly_task)
     else:
         LOGGER.warning("DB_URL not set — anomaly engine disabled")
+
+    # 6. LLM Decision Engine — Runs clock-aligned market briefings from DB (NEW)
+    if settings.DB_URL:
+        llm_task = asyncio.create_task(
+            start_llm_decision_stream(stop),
+            name="llm_decision_engine",
+        )
+        tasks.append(llm_task)
+    else:
+        LOGGER.warning("DB_URL not set — LLM decision engine disabled")
 
     try:
         await stop.wait()
