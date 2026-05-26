@@ -13,6 +13,10 @@ from typing import Awaitable, Callable
 
 from src.core.config import settings
 from src.core.utils.logging import configure_logging
+from src.core.utils.retraining_scheduler import (
+    shutdown_retraining_scheduler,
+    start_retraining_scheduler,
+)
 from src.core.utils.signals import setup_signals
 
 from src.data_sources.binancewebsocket.ws_trades_ingestion import start_trade_stream
@@ -105,6 +109,11 @@ async def _run_all() -> None:
         LOGGER.warning("DB_URL not set — anomaly engine disabled")
 
     try:
+        if settings.RETRAIN_ENABLED and settings.DB_URL:
+            start_retraining_scheduler()
+        elif settings.RETRAIN_ENABLED:
+            LOGGER.warning("DB_URL not set — scheduled retraining disabled")
+
         await stop.wait()
     finally:
         LOGGER.info("shutdown signal received — stopping all pipelines")
@@ -122,7 +131,10 @@ async def _run_all() -> None:
         if timescale_sink is not None:
             await timescale_sink.close()
 
-        # 4. Kill the Connection Pool LAST
+        # 4. Stop scheduled jobs before closing database connections
+        shutdown_retraining_scheduler()
+
+        # 5. Kill the Connection Pool LAST
         if settings.DB_URL:
             close_pool()
 
