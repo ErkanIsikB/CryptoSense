@@ -62,6 +62,23 @@ def _parse_csv_set(raw: str | None, defaults: set[str]) -> set[str]:
     return normalized or defaults
 
 
+def _parse_bool(raw: str | None, default: bool = False) -> bool:
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_csv_tuple(raw: str | None, defaults: tuple[str, ...], *, upper: bool = False) -> tuple[str, ...]:
+    if raw is None:
+        return defaults
+    parts = tuple(part.strip() for part in raw.split(",") if part.strip())
+    if not parts:
+        return defaults
+    if upper:
+        return tuple(part.upper() for part in parts)
+    return parts
+
+
 ENABLED_TOKENS: set[str] = _parse_csv_set(
     os.getenv("ENABLED_TOKENS"), {"BTC", "ETH", "SOL", "BNB", "AVAX"}
 )
@@ -112,4 +129,22 @@ CEX_FLOW_TIMEOUT_S: float = float(os.getenv("CEX_FLOW_TIMEOUT_S", "30"))
 # ── Optional JSONL backup alongside DB writes ────────────────
 ENABLE_JSONL_BACKUP: bool = (
     os.getenv("ENABLE_JSONL_BACKUP", "false").strip().lower() in {"1", "true", "yes"}
+)
+
+# ── Scheduled anomaly-model retraining ────────────────────────
+RETRAIN_ENABLED: bool = _parse_bool(os.getenv("RETRAIN_ENABLED"), False)
+RETRAIN_INTERVAL_DAYS: int = max(1, int(os.getenv("RETRAIN_INTERVAL_DAYS", "14")))
+RETRAIN_LOOKBACK_DAYS: int = max(1, int(os.getenv("RETRAIN_LOOKBACK_DAYS", "14")))
+RETRAIN_DEVICE: str = os.getenv("RETRAIN_DEVICE", "auto").strip().lower() or "auto"
+RETRAIN_TIMEZONE: str = os.getenv("RETRAIN_TIMEZONE", "UTC").strip() or "UTC"
+RETRAIN_MISFIRE_GRACE_SECONDS: int = max(
+    1, int(os.getenv("RETRAIN_MISFIRE_GRACE_SECONDS", "3600"))
+)
+RETRAIN_SYMBOLS: tuple[str, ...] = _parse_csv_tuple(
+    os.getenv("RETRAIN_SYMBOLS"),
+    ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "AVAXUSDT"),
+    upper=True,
+)
+RETRAIN_OUTPUT_DIR: Path = Path(
+    os.getenv("RETRAIN_OUTPUT_DIR", str(PROJECT_ROOT / "src" / "models" / "saved_weights"))
 )

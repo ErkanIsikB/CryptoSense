@@ -9,15 +9,16 @@ import torch
 import pandas as pd
 import numpy as np
 
+from src.core.config import settings
 from src.db.db import execute_query_fetch_async, execute_query_async
 from src.models.lstm_autoencoder import LSTMAutoencoder
+from src.models.model_registry import ModelRegistry
 
 LOGGER = logging.getLogger("anomaly_pipeline")
 
 TRACKED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "AVAXUSDT"]
 
 SEQ_LEN = 12
-INPUT_DIM = 18
 LATENT_DIM = 10
 ANOMALY_THRESHOLD = 0.008
 
@@ -105,6 +106,70 @@ async def fetch_and_scale_latest_window(target_symbol: str, base_symbol: str, sc
 
     return input_tensor, latest_data_dict
 
+
+def _latest_versioned_artifacts(symbol: str) -> tuple[Path, Path] | None:
+    symbol_dir = WEIGHTS_DIR / symbol.upper()
+    if not symbol_dir.exists():
+        return None
+
+    version_dirs = sorted(
+        (path for path in symbol_dir.iterdir() if path.is_dir()),
+        key=lambda path: path.name,
+        reverse=True,
+    )
+    for version_dir in version_dirs:
+        model_path = version_dir / "model.pt"
+        scaler_path = version_dir / "scaler.json"
+        if model_path.exists() and scaler_path.exists():
+            return model_path, scaler_path
+
+    return None
+
+
+def _legacy_artifacts(symbol: str) -> tuple[Path, Path]:
+    base_sym = symbol.replace("USDT", "").lower()
+    return (
+        WEIGHTS_DIR / f"lstm_autoencoder_{base_sym}.pt",
+        WEIGHTS_DIR / f"scaler_params_{base_sym}.json",
+    )
+
+
+def _resolve_artifact_paths(symbol: str) -> tuple[Path, Path]:
+    versioned = _latest_versioned_artifacts(symbol)
+    if versioned is not None:
+        return versioned
+    return _legacy_artifacts(symbol)
+
+
+def _resolve_model_device() -> torch.device:
+    configured = settings.RETRAIN_DEVICE
+    if configured == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if configured.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError(f"RETRAIN_DEVICE={configured!r} requested but CUDA is unavailable.")
+    return torch.device(configured)
+
+
+def load_model_into_registry(symbol: str, device: torch.device) -> bool:
+    model_path, scaler_path = _resolve_artifact_paths(symbol)
+
+    if not model_path.exists() or not scaler_path.exists():
+        LOGGER.error(f"Missing weights for {symbol}. Skipping this coin.")
+        return False
+
+    with open(scaler_path, "r", encoding="utf-8") as f:
+        scaler_params = json.load(f)
+
+    input_dim = len(scaler_params["features"])
+    model = LSTMAutoencoder(input_dim=input_dim, hidden_dim=LATENT_DIM, seq_len=SEQ_LEN)
+    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    model.to(device)
+    model.eval()
+    ModelRegistry.register(symbol, model, scaler_params)
+    LOGGER.info("Loaded anomaly model for %s from %s", symbol, model_path)
+    return True
+
+
 def run_model_inference(model: LSTMAutoencoder, input_tensor: torch.Tensor) -> float:
     with torch.no_grad():
         reconstructed = model(input_tensor)
@@ -114,48 +179,36 @@ def run_model_inference(model: LSTMAutoencoder, input_tensor: torch.Tensor) -> f
 
 async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
     LOGGER.info("Starting Multi-Coin AI Anomaly Detection Engine...")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = _resolve_model_device()
 
-    models_cache = {}
-    scalers_cache = {}
-
+    loaded_symbols = []
     for symbol in TRACKED_SYMBOLS:
-        base_sym = symbol.replace("USDT", "").lower()
-        model_path = WEIGHTS_DIR / f"lstm_autoencoder_{base_sym}.pt"
-        scaler_path = WEIGHTS_DIR / f"scaler_params_{base_sym}.json"
+        if load_model_into_registry(symbol, device):
+            loaded_symbols.append(symbol)
 
-        if not model_path.exists() or not scaler_path.exists():
-            LOGGER.error(f"Missing weights for {symbol}. Skipping this coin.")
-            continue
-
-        with open(scaler_path, "r", encoding="utf-8") as f:
-            scalers_cache[symbol] = json.load(f)
-
-        model = LSTMAutoencoder(input_dim=INPUT_DIM, hidden_dim=LATENT_DIM, seq_len=SEQ_LEN)
-        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-        model.to(device)
-        model.eval()
-        models_cache[symbol] = model
-
-    if not models_cache:
+    if not loaded_symbols:
         LOGGER.error("No models loaded. Shutting down anomaly pipeline.")
         return
 
     while not stop_event.is_set():
         try:
             # 1. Execute inference across all models in high-speed succession
-            for target_symbol in models_cache.keys():
+            for target_symbol in TRACKED_SYMBOLS:
                 base_symbol = target_symbol.replace("USDT", "")
+                model, scaler_params = ModelRegistry.get(target_symbol)
+
+                if model is None or scaler_params is None:
+                    continue
 
                 input_tensor, latest_data = await fetch_and_scale_latest_window(
-                    target_symbol, base_symbol, scalers_cache[target_symbol]
+                    target_symbol, base_symbol, scaler_params
                 )
 
                 if input_tensor is None or latest_data is None:
                     continue
 
-                input_tensor = input_tensor.to(device)
-                model = models_cache[target_symbol]
+                model_device = next(model.parameters()).device
+                input_tensor = input_tensor.to(model_device)
 
                 # Offload PyTorch inference computation to a worker thread
                 mse = await asyncio.to_thread(run_model_inference, model, input_tensor)
