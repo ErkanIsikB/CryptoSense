@@ -213,12 +213,13 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
                 # Offload PyTorch inference computation to a worker thread
                 mse = await asyncio.to_thread(run_model_inference, model, input_tensor)
 
-                is_anomaly = mse > ANOMALY_THRESHOLD
+                threshold = scaler_params.get("optimal_threshold", ANOMALY_THRESHOLD)
+                is_anomaly = mse > threshold
 
                 if is_anomaly:
-                    LOGGER.warning(f"🚨 {target_symbol} ANOMALY! MSE: {mse:.6f} 🚨")
+                    LOGGER.warning(f"🚨 {target_symbol} ANOMALY! MSE: {mse:.6f} | threshold: {threshold:.6f} 🚨")
                 else:
-                    LOGGER.info(f"{target_symbol} heartbeat normal. MSE: {mse:.6f}")
+                    LOGGER.info(f"{target_symbol} heartbeat normal. MSE: {mse:.6f} | threshold: {threshold:.6f}")
 
                 llm_payload = {
                     "timestamp": latest_data["bucket"].isoformat(),
@@ -247,7 +248,7 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
                     "AI_ENGINE": {
                         "reconstruction_error": round(mse, 6),
                         "is_statistical_anomaly": is_anomaly,
-                        "severity": "CRITICAL" if mse > (ANOMALY_THRESHOLD * 2) else "HIGH" if is_anomaly else "NORMAL"
+                        "severity": "CRITICAL" if mse > (threshold * 2) else "HIGH" if is_anomaly else "NORMAL"
                     }
                 }
 

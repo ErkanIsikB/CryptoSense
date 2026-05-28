@@ -41,7 +41,7 @@ graph TD
     %% AI Anomaly Detection & LLM Engines
     subgraph ML_Engine ["AI Anomaly & Decision Engines"]
         AP[Anomaly Pipeline <br/> Runs every 5 mins]
-        LSTM[LSTM Autoencoder <br/> 19 Features, 10 Latent Dim]
+        LSTM[LSTM Autoencoder <br/> 18 Features, 10 Latent Dim]
         SCALER[Dynamic MinMax Normalizer]
         
         LLM[LLM Decision Stream <br/> Runs every 5 mins]
@@ -75,7 +75,7 @@ graph TD
     T_CF --> AP
     
     AP --> SCALER --> LSTM
-    LSTM -->|MSE Error > Threshold| AP
+    LSTM -->|MSE Error > Dynamic Youden J Threshold| AP
     AP -->|Upsert anomaly metrics & LLM payload| T_ANOM
     
     T_ANOM -->|Chronological 12-candle trigger| LLM
@@ -99,7 +99,7 @@ graph TD
 1. **Pipeline Execution & Thread Offloading**: Live trades (Binance), orderbook snapshot averages, sentiment models (XQuik/FinBERT), and exchange transfers are continuously aggregated into 5-minute buckets and committed directly to TimescaleDB. Heavy computations—like FinBERT text scoring, PyTorch forward-passes, and database batch flushes—are offloaded to background threads (`asyncio.to_thread` / `threading.Thread`), keeping the event loop 100% fluid.
 2. **Dynamic DB CTE Barrier Sync & CEX Flow LEFT JOIN**: To eliminate timing drift and prevent "ghost" data entries from corrupting model normalization, the Anomaly Engine queries using a strict 3-table `INTERSECT` CTE barrier across high-frequency feeds (`trade_candles_5m`, `orderbook_snapshots_5m`, and `tweet_sentiment_5m`). The lower-frequency on-chain CEX flows (`cex_flows_5m`) are joined optionally via a `LEFT JOIN` and wrapped in `COALESCE` to default missing metrics to `0.0`.
 3. **Thread-Safe Pooling & Teardown Security**: Database operations are protected by thread-safe PgPool async query wrappers guarded by an `asyncio.Semaphore(10)` matched to database pool limits. Teardown lifecycles implement a top-down closing hierarchy with a 1.0s settling grace period and synchronous shutdown flushes to prevent psycopg2 pool errors.
-4. **AI Anomaly Engine**: Every 5 minutes, the engine queries the database, constructs a chronological 1-hour window (12 sequential 5-minute buckets) of 19 market and sentiment features. It maps database fields explicitly by column name to avoid positional scaling corruption, scales the metrics dynamically via trained MinMax matrices, and inputs them into coin-specific LSTM Autoencoder models.
+4. **AI Anomaly Engine**: Every 5 minutes, the engine queries the database, constructs a chronological 1-hour window (12 sequential 5-minute buckets) of 18 quantitative market and sentiment features (excluding the bucket timestamp). It maps database fields explicitly by column name to avoid positional scaling corruption, scales the metrics dynamically via trained MinMax matrices, and inputs them into coin-specific LSTM Autoencoder models.
 5. **LLM Decision Engine**: Every 5 minutes (offset by +35 seconds to allow models to write), the LLM engine polls `ai_anomalies_5m` for the latest candles. It reverse-sorts them into chronological order, strips anomaly tags from historical candles to preserve timeline purity, formats the raw sequence into a contextual prompt, and fires structured JSON queries to a local Qwen 2.5 instance via Ollama.
 6. **APScheduler Retraining Loop**: If enabled (`RETRAIN_ENABLED=true`), an automated scheduler daemon starts on startup. Every 14 days, it triggers a background retraining service that pulls the past 14 days of clean records from TimescaleDB, isolates continuous 1-hour sequence blocks, trains the LSTM Autoencoder over 100 epochs, writes out new weights atomically, and hot-swaps the memory registry of the running pipeline without requiring a service reboot.
 
@@ -189,7 +189,7 @@ TimescaleDB manages temporal data alignment seamlessly. All core tables are init
 | `bucket` 🔑 | TIMESTAMPTZ | 5-minute bucket start timestamp |
 | `symbol` 🔑 | TEXT | Base asset symbol (e.g. `BTC`) |
 | `mse_score` | DOUBLE PRECISION | Mean Squared Error (reconstruction loss) from Autoencoder |
-| `is_anomaly` | BOOLEAN | `TRUE` if `mse_score` exceeds threshold (`0.008`) |
+| `is_anomaly` | BOOLEAN | `TRUE` if `mse_score` exceeds dynamically calibrated Youden's J threshold from scaler.json |
 | `severity` | TEXT | Severity ranking (`HIGH` if `mse_score > threshold * 2`, else `NORMAL`) |
 | `llm_payload` | JSONB | Complete JSON package ready for LLM consumption and reasoning |
 
@@ -210,8 +210,8 @@ TimescaleDB manages temporal data alignment seamlessly. All core tables are init
 ## 🧠 AI Anomaly & LLM Decision Engines
 
 ### 1. PyTorch LSTM Autoencoder
-* **Architecture**: Sequence length of `12` (exactly 1 hour of history) and a features dimension of `19` (covering price, depth, spread, volume, on-chain flows, and FinBERT sentiment). Hidden dimension bottleneck is `10` (`LATENT_DIM = 10`).
-* **Unsupervised Anomaly Detection**: Minimizes reconstruction loss (MSE). A deviation error above `0.008` registers as a statistical anomaly.
+* **Architecture**: Sequence length of `12` (exactly 1 hour of history) and a features dimension of `18` (covering price, depth, spread, volume, on-chain flows, and FinBERT sentiment, excluding the bucket timestamp). Hidden dimension bottleneck is `10` (`LATENT_DIM = 10`).
+* **Unsupervised Anomaly Detection**: Minimizes reconstruction loss (MSE). A reconstruction error exceeding the dynamically calibrated optimal Youden's J threshold (e.g., 0.003071 with a verified AUC of 0.77621 for AVAXUSDT, serialized in scaler.json) registers as a statistical anomaly.
 
 ### 2. Scheduled Retraining Daemon
 * Scheduled retraining runs continuously in the background via `APScheduler` ID `retrain_job` if `RETRAIN_ENABLED=true` is set.

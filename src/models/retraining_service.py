@@ -223,6 +223,133 @@ def extract_continuous_sequences(df: pd.DataFrame) -> tuple[np.ndarray, dict[str
     return final_sequences, scaler_params
 
 
+def _calibrate_and_update_scaler_params(
+    model: LSTMAutoencoder,
+    X_train_np: np.ndarray,
+    df: pd.DataFrame,
+    scaler_params: dict[str, Any],
+    device: torch.device,
+) -> None:
+    """Run ROC threshold calibration on trained model and append results to scaler_params."""
+    try:
+        LOGGER.info("Starting ROC threshold calibration on trained model...")
+        
+        # 1. Generate statistical proxy labels using Z-scores
+        close = df["close"].to_numpy()
+        returns = np.zeros_like(close)
+        returns[1:] = np.log(close[1:] / close[:-1])
+        
+        volume = df["volume"].to_numpy()
+        imbalance = df["avg_imbalance"].to_numpy()
+        net_flow = df["net_flow_usd"].to_numpy()
+        
+        def compute_z_scores(arr: np.ndarray) -> np.ndarray:
+            mean = np.mean(arr)
+            std = np.std(arr)
+            std = std if std != 0 else 1.0
+            return np.abs((arr - mean) / std)
+            
+        z_returns = compute_z_scores(returns)
+        z_volume = compute_z_scores(volume)
+        z_imbalance = compute_z_scores(imbalance)
+        z_flow = compute_z_scores(net_flow)
+        
+        proxy_labels = ((z_returns > 2.5) | 
+                        (z_volume > 2.5) | 
+                        (z_imbalance > 2.5) | 
+                        (z_flow > 2.5)).astype(int)
+                        
+        # 2. Extract labels aligned to sequences
+        seq_len = SEQUENCE_LENGTH
+        labels = []
+        timestamps = df["bucket"].tolist()
+        current_block_labels = []
+        last_timestamp = None
+        
+        for i, current_ts in enumerate(timestamps):
+            lbl = proxy_labels[i]
+            if last_timestamp is None:
+                current_block_labels.append(lbl)
+            else:
+                time_delta = current_ts - last_timestamp
+                if time_delta <= timedelta(minutes=5):  # BUCKET_DELTA_MINUTES
+                    current_block_labels.append(lbl)
+                else:
+                    if len(current_block_labels) >= seq_len:
+                        for start in range(len(current_block_labels) - seq_len + 1):
+                            labels.append(current_block_labels[start + seq_len - 1])
+                    current_block_labels = [lbl]
+            last_timestamp = current_ts
+            
+        if len(current_block_labels) >= seq_len:
+            for start in range(len(current_block_labels) - seq_len + 1):
+                labels.append(current_block_labels[start + seq_len - 1])
+                
+        y_eval = np.array(labels, dtype=np.int32)
+        
+        # Alignment check
+        if len(X_train_np) != len(y_eval):
+            LOGGER.warning("Mismatch in sequences and labels during calibration. Truncating to match.")
+            min_len = min(len(X_train_np), len(y_eval))
+            X_train_np = X_train_np[:min_len]
+            y_eval = y_eval[:min_len]
+            
+        if len(X_train_np) == 0:
+            LOGGER.warning("No sequences available for ROC calibration.")
+            scaler_params["optimal_threshold"] = 0.008
+            scaler_params["auc_score"] = 0.5
+            return
+
+        # 3. Inference to get MSE scores
+        model.eval()
+        mse_scores = []
+        X_tensor = torch.tensor(X_train_np).to(device)
+        
+        with torch.no_grad():
+            batch_size = 64
+            for start_idx in range(0, len(X_tensor), batch_size):
+                batch_x = X_tensor[start_idx : start_idx + batch_size]
+                reconstructed = model(batch_x)
+                batch_mse = torch.mean((batch_x - reconstructed) ** 2, dim=(1, 2)).cpu().numpy()
+                mse_scores.extend(batch_mse)
+                
+        y_scores = np.array(mse_scores, dtype=np.float32)
+        
+        # 4. ROC calculations
+        desc_score_indices = np.argsort(y_scores)[::-1]
+        y_scores = y_scores[desc_score_indices]
+        y_eval = y_eval[desc_score_indices]
+        
+        tps = np.cumsum(y_eval)
+        fps = np.cumsum(1 - y_eval)
+        
+        thresholds = y_scores
+        tpr = tps / tps[-1] if tps[-1] > 0 else np.zeros_like(tps)
+        fpr = fps / fps[-1] if fps[-1] > 0 else np.zeros_like(fps)
+        
+        tpr = np.r_[0.0, tpr]
+        fpr = np.r_[0.0, fpr]
+        thresholds = np.r_[thresholds[0] + 1e-5, thresholds]
+        
+        # Native trapezoidal implementation to avoid numpy 2.0+ deprecation/removal of np.trapz
+        auc_score = float(np.sum((tpr[1:] + tpr[:-1]) * 0.5 * (fpr[1:] - fpr[:-1])))
+        
+        # Youden's J statistic
+        j_scores = tpr - fpr
+        best_idx = int(np.argmax(j_scores))
+        optimal_threshold = float(thresholds[best_idx])
+        
+        LOGGER.info(f"ROC calibration completed. Calculated AUC: {auc_score:.5f}, Dynamic Threshold: {optimal_threshold:.6f}")
+        scaler_params["optimal_threshold"] = optimal_threshold
+        scaler_params["auc_score"] = auc_score
+        
+    except Exception as e:
+        LOGGER.exception(f"Failed to run ROC threshold calibration: {e}")
+        # Default safe fallbacks
+        scaler_params["optimal_threshold"] = 0.008
+        scaler_params["auc_score"] = 0.5
+
+
 def train_symbol_model(
     target_symbol: str = TARGET_SYMBOL,
     *,
@@ -280,6 +407,8 @@ def train_symbol_model(
             LOGGER.info("Epoch [%d/%d] | Reconstruction Loss: %.6f", epoch, EPOCHS, avg_loss)
 
     # 4. Save Final Serialized Weights
+    _calibrate_and_update_scaler_params(model, X_train_np, df, scaler_params, device)
+
     try:
         _write_artifacts_atomically(
             output_root=output_root,
