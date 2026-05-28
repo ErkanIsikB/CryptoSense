@@ -2,7 +2,7 @@
 
 CryptoSense is a high-performance, production-grade data engineering pipeline that ingests, processes, and persists multi-source cryptocurrency market data, sentiment, and on-chain fund flows into TimescaleDB. 
 
-In addition to temporal alignment and real-time ingestion, CryptoSense features a **state-of-the-art AI Anomaly Detection Engine** powered by unsupervised deep learning (LSTM Autoencoders). It analyzes 5-minute bucketed market, sentiment, and wallet transfer snapshots to detect deviations from baseline market dynamics and outputs highly structured payloads optimized for downstream LLM reasoning.
+In addition to temporal alignment and real-time ingestion, CryptoSense features a **state-of-the-art AI Anomaly Detection Engine** powered by unsupervised deep learning (LSTM Autoencoders) and an **automated LLM Decision Engine** (running structured Qwen 2.5 local models via Ollama) to output qualitative market diagnostics.
 
 ---
 
@@ -35,13 +35,26 @@ graph TD
         T_TS[(tweet_sentiment_5m)]
         T_CF[(cex_flows_5m)]
         T_ANOM[(ai_anomalies_5m)]
+        T_LLM[(llm_health_scores)]
     end
 
-    %% AI Anomaly Detection Engine
-    subgraph ML_Engine ["AI Anomaly Detection Engine (PyTorch)"]
+    %% AI Anomaly Detection & LLM Engines
+    subgraph ML_Engine ["AI Anomaly & Decision Engines"]
         AP[Anomaly Pipeline <br/> Runs every 5 mins]
         LSTM[LSTM Autoencoder <br/> 19 Features, 10 Latent Dim]
-        SCALER[Dynamic MinMax <br/> Normalizer per coin]
+        SCALER[Dynamic MinMax Normalizer]
+        
+        LLM[LLM Decision Stream <br/> Runs every 5 mins]
+        QWEN[Qwen 2.5 7B Model <br/> Local Ollama Client]
+        
+        RS[Retraining Service <br/> train_symbol_model]
+        SCHED[APScheduler Daemon <br/> every 14 days]
+    end
+
+    %% User Facing Layer
+    subgraph UserInterface ["Presentation & API Layer"]
+        API[FastAPI Backend REST API <br/> Port 8000]
+        DASH[Streamlit Dashboard Grid <br/> Port 8501]
     end
 
     %% Flows
@@ -64,19 +77,31 @@ graph TD
     AP --> SCALER --> LSTM
     LSTM -->|MSE Error > Threshold| AP
     AP -->|Upsert anomaly metrics & LLM payload| T_ANOM
+    
+    T_ANOM -->|Chronological 12-candle trigger| LLM
+    LLM --> QWEN -->|Upsert market health scores| T_LLM
+    
+    SCHED -->|Trigger periodic training| RS
+    RS -->|Optimize weights & Hot-swap| LSTM
+    RS -->|Update mins/maxs| SCALER
+    
+    T_TC & T_OS & T_TS & T_CF & T_ANOM & T_LLM --> API
+    API --> DASH
 
     style ML_Engine fill:#2d1a47,stroke:#953df4,stroke-width:2px,color:#fff
     style Ingestion fill:#1b2a47,stroke:#3d8bf4,stroke-width:1px,color:#fff
     style Storage fill:#1a3c2a,stroke:#3df48b,stroke-width:1px,color:#fff
     style Processing fill:#3a3a1a,stroke:#f4d63d,stroke-width:1px,color:#fff
+    style UserInterface fill:#1e3c3c,stroke:#20b2aa,stroke-width:1px,color:#fff
 ```
 
 ### Dynamic Ingestion & Machine Learning Loops
-1. **Pipeline Execution & Thread Offloading**: Live trades (Binance), orderbook snapshot averages, sentiment models (XQuik/FinBERT), and exchange transfers are continuously aggregated into 5-minute buckets and committed directly to TimescaleDB. All synchronous database flushes and heavy deep learning scoring (FinBERT & PyTorch LSTM) are offloaded to background threads and daemon tasks, keeping the `asyncio` event loop 100% fluid and non-blocking.
-2. **Dynamic DB CTE Barrier Sync & CEX Flow LEFT JOIN**: To prevent partial or "ghost" data entries from corrupting model normalization, the Anomaly Engine queries using a strict 3-table `INTERSECT` CTE barrier across high-frequency feeds (`trade_candles_5m`, `orderbook_snapshots_5m`, and `tweet_sentiment_5m`). The lower-frequency on-chain CEX flows (`cex_flows_5m`) are joined optionally via a `LEFT JOIN` and wrapped in `COALESCE` to default missing metrics to `0.0`. This ensures absolute timeline alignment without locking out anomaly detection during periods of transfer sparsity (e.g. for AVAX, whose exchange transfers are tracked as wrapped/pegged tokens on BSC and Ethereum).
-3. **Thread-Safe Pooling & Teardown Security**: Database operations are protected by thread-safe PgPool async query wrappers guarded by an `asyncio.Semaphore(10)` matched to database pool limits. Teardown lifecycles implement a top-down closing hierarchy with a 1.0s settling grace period and synchronous shutdown flushes to prevent psycopg2 pool errors and preserve final in-RAM data buckets.
+1. **Pipeline Execution & Thread Offloading**: Live trades (Binance), orderbook snapshot averages, sentiment models (XQuik/FinBERT), and exchange transfers are continuously aggregated into 5-minute buckets and committed directly to TimescaleDB. Heavy computations—like FinBERT text scoring, PyTorch forward-passes, and database batch flushes—are offloaded to background threads (`asyncio.to_thread` / `threading.Thread`), keeping the event loop 100% fluid.
+2. **Dynamic DB CTE Barrier Sync & CEX Flow LEFT JOIN**: To eliminate timing drift and prevent "ghost" data entries from corrupting model normalization, the Anomaly Engine queries using a strict 3-table `INTERSECT` CTE barrier across high-frequency feeds (`trade_candles_5m`, `orderbook_snapshots_5m`, and `tweet_sentiment_5m`). The lower-frequency on-chain CEX flows (`cex_flows_5m`) are joined optionally via a `LEFT JOIN` and wrapped in `COALESCE` to default missing metrics to `0.0`.
+3. **Thread-Safe Pooling & Teardown Security**: Database operations are protected by thread-safe PgPool async query wrappers guarded by an `asyncio.Semaphore(10)` matched to database pool limits. Teardown lifecycles implement a top-down closing hierarchy with a 1.0s settling grace period and synchronous shutdown flushes to prevent psycopg2 pool errors.
 4. **AI Anomaly Engine**: Every 5 minutes, the engine queries the database, constructs a chronological 1-hour window (12 sequential 5-minute buckets) of 19 market and sentiment features. It maps database fields explicitly by column name to avoid positional scaling corruption, scales the metrics dynamically via trained MinMax matrices, and inputs them into coin-specific LSTM Autoencoder models.
-5. **Statistical Outliers**: Reconstruction loss (MSE) is evaluated against a tuned volatility threshold. Severe errors trigger warnings and generate structured JSON payloads containing localized contextual states for instantaneous consumption by LLM agents.
+5. **LLM Decision Engine**: Every 5 minutes (offset by +35 seconds to allow models to write), the LLM engine polls `ai_anomalies_5m` for the latest candles. It reverse-sorts them into chronological order, strips anomaly tags from historical candles to preserve timeline purity, formats the raw sequence into a contextual prompt, and fires structured JSON queries to a local Qwen 2.5 instance via Ollama.
+6. **APScheduler Retraining Loop**: If enabled (`RETRAIN_ENABLED=true`), an automated scheduler daemon starts on startup. Every 14 days, it triggers a background retraining service that pulls the past 14 days of clean records from TimescaleDB, isolates continuous 1-hour sequence blocks, trains the LSTM Autoencoder over 100 epochs, writes out new weights atomically, and hot-swaps the memory registry of the running pipeline without requiring a service reboot.
 
 ---
 
@@ -151,14 +176,14 @@ TimescaleDB manages temporal data alignment seamlessly. All core tables are init
 | `bucket` 🔑 | TIMESTAMPTZ | 5-minute bucket start timestamp |
 | `symbol` 🔑 | TEXT | Unified token symbol (e.g. `ETH`) |
 | `network` 🔑 | TEXT | Blockchain network (e.g. `ethereum`, `bsc`, `solana`) |
-| `inflow_amount` 🆕 | DOUBLE PRECISION | Cumulative volume of tokens moving into CEX wallets |
+| `inflow_amount` | DOUBLE PRECISION | Cumulative volume of tokens moving into CEX wallets |
 | `inflow_usd` | DOUBLE PRECISION | Cumulative USD value of CEX inflows |
-| `outflow_amount` 🆕 | DOUBLE PRECISION | Cumulative volume of tokens moving out of CEX wallets |
+| `outflow_amount` | DOUBLE PRECISION | Cumulative volume of tokens moving out of CEX wallets |
 | `outflow_usd` | DOUBLE PRECISION | Cumulative USD value of CEX outflows |
 | `net_flow_usd` | DOUBLE PRECISION | Net flow in USD (`inflow_usd - outflow_usd`) |
 | `inflow_tx_count` / `outflow_tx_count` | INTEGER | Transaction counts per inflow/outflow direction |
 
-### 5. `ai_anomalies_5m` 🆕 — Deep Learning Engine Outputs
+### 5. `ai_anomalies_5m` — Deep Learning Engine Outputs
 | Column | Type | Description |
 | :--- | :--- | :--- |
 | `bucket` 🔑 | TIMESTAMPTZ | 5-minute bucket start timestamp |
@@ -168,62 +193,41 @@ TimescaleDB manages temporal data alignment seamlessly. All core tables are init
 | `severity` | TEXT | Severity ranking (`HIGH` if `mse_score > threshold * 2`, else `NORMAL`) |
 | `llm_payload` | JSONB | Complete JSON package ready for LLM consumption and reasoning |
 
+### 6. `llm_health_scores` 🆕 — Qualitative LLM Briefs
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `bucket` 🔑 | TIMESTAMPTZ | 5-minute bucket start timestamp |
+| `symbol` 🔑 | TEXT | Unified token symbol (e.g. `BTC`) |
+| `health_score` | INTEGER | Qualitative health rating `[0, 100]` computed by local Qwen LLM |
+| `reasoning` | TEXT | Primary driver metadata & trustworthiness classification header |
+| `explanation` | TEXT | Structured 3-sentence quantitative summary of vectors shift |
+| `model_name` | TEXT | Local LLM model identifier (e.g., `qwen2.5:7b`) |
+| `latency_ms` | INTEGER | Time taken in milliseconds to run structured inference |
+| `input_payload` | JSONB | The chronological 12-candle sequence payload used as LLM context |
+
 ---
 
-## 🧠 AI Anomaly Detection Engine
+## 🧠 AI Anomaly & LLM Decision Engines
 
-The AI Anomaly Detection Engine monitors the pipeline for multi-dimensional anomalies (price fluctuations, abrupt orderbook depth changes, sentiment shifts, and high-volume whale transfers) simultaneously.
+### 1. PyTorch LSTM Autoencoder
+* **Architecture**: Sequence length of `12` (exactly 1 hour of history) and a features dimension of `19` (covering price, depth, spread, volume, on-chain flows, and FinBERT sentiment). Hidden dimension bottleneck is `10` (`LATENT_DIM = 10`).
+* **Unsupervised Anomaly Detection**: Minimizes reconstruction loss (MSE). A deviation error above `0.008` registers as a statistical anomaly.
 
-### 1. Deep Learning Model Architecture
-- **Model Type**: Unsupervised LSTM Autoencoder (`src/models/lstm_autoencoder.py`).
-- **Layers**:
-  - **Encoder**: An LSTM layer mapping input temporal features into a lower-dimensional latent space.
-  - **Decoder**: An LSTM layer that takes the latent vector, repeats it over the sequence length, reconstructs the inputs, and maps them back to the original dimensions via a Linear projection.
-- **Input Dimensions**: Sequence Length = `12` (representing exactly 1 hour of 5-minute buckets). Feature Dimensions = `19` (covering price metrics, volumes, spread, bid/ask depth, social sentiment, tweet counts, and net USD CEX flows).
-- **Latent Bottleneck**: `10` dimensions (`LATENT_DIM = 10`).
+### 2. Scheduled Retraining Daemon
+* Scheduled retraining runs continuously in the background via `APScheduler` ID `retrain_job` if `RETRAIN_ENABLED=true` is set.
+* Generates sliding continuous sequence windows from historical DB hypertables, trains a fresh model, writes parameters atomically, and dynamically updates the running in-memory model registry (`ModelRegistry`) using zero-downtime hot-swapping.
 
-### 2. Normalization & Inference Pipeline (`src/models/anomaly_pipeline.py`)
-- **Startup**: Dynamically loads PyTorch models (`lstm_autoencoder_<symbol>.pt`) and companion MinMax scaler files (`scaler_params_<symbol>.json`) for all monitored assets into RAM.
-- **Temporal Check**: Ensures sequential continuity. If any downtime gap (> 5 minutes) is discovered within the current 12-bucket window, inference is skipped to prevent invalid statistical projections.
-- **Inference Execution**: Wakes up every 5 minutes, constructs the normalized sequence using the loaded coin-specific scaler parameters, and runs PyTorch model evaluations to compute reconstruction error (MSE).
-- **Threshold Matching**: Classified as an anomaly if the MSE reconstruction loss exceeds the volatility baseline of `0.008`.
-- **Database Upsert**: Saves anomaly statuses, scores, and writes a detailed JSON payload (`llm_payload`) containing structured statistical context directly to `ai_anomalies_5m`.
-
-### 3. LLM-Ready Payload Structure
-When an anomaly is flagged, the JSON payload in `llm_payload` takes the following format, ready for direct injection into AI agent prompts:
-
-```json
-{
-  "timestamp": "2026-05-21T19:45:00Z",
-  "symbol": "BTCUSDT",
-  "market_data": {
-    "close_price": 71250.00,
-    "volume_5m": 345.20,
-    "vwap": 71245.50,
-    "net_trade": 12.50
-  },
-  "orderbook": {
-    "avg_spread": 0.0500,
-    "avg_imbalance": 0.452,
-    "bid_depth": 1250000.00,
-    "ask_depth": 850000.00
-  },
-  "sentiment": {
-    "avg_score": -0.420,
-    "tweet_count": 89,
-    "positive_count": 15,
-    "negative_count": 52
-  },
-  "on_chain": {
-    "net_cex_flow_usd": -125000.00
-  },
-  "AI_ENGINE": {
-    "reconstruction_error": 0.018542,
-    "is_statistical_anomaly": true,
-    "severity": "HIGH"
-  }
-}
-```
+### 3. Local Ollama LLM Decision Stream
+* The LLM Stream (`src/models/llm_pipeline.py`) aligns with the 5-minute mark (+35 seconds padding).
+* Takes the 12-candle historical sequence and pipes it through a system-grounded prompt to **Ollama** running `qwen2.5:7b`.
+* Enforces strict, schema-locked token outputs mapped directly to a Pydantic structure (`CryptoSenseBrief`):
+  ```python
+  class CryptoSenseBrief(BaseModel):
+      market_health_score: int          # Range: [0, 100]
+      primary_metric_driver: Literal["volume_spike", "liquidity_flight", "sentiment_shift", "on_chain_whale_flow", "none"]
+      market_trajectory_summary: str    # Strict factual 3-sentence quantitative summary
+      trustworthiness_classification: Literal["HIGH_CONVICTION", "LOW_TRUST_SPECULATIVE", "LIQUIDITY_EXHAUSTION", "STABLE_BASELINE"]
+  ```
 
 ---
 
@@ -233,6 +237,9 @@ When an anomaly is flagged, the JSON payload in `llm_payload` takes the followin
 CryptoSense/
 ├── main.py                           # Unified system orchestrator (starts all pipelines)
 ├── requirements.txt                  # Python dependencies
+├── Dockerfile                        # Multi-stage optimized application container definition
+├── docker-compose.yml                # Composition layers (ingestion-pipeline, web-api, dashboard)
+├── docker-compose.override.yml       # Local GPU Hardware Acceleration Override (git-ignored)
 ├── .env                              # System settings & secret keys (git-ignored)
 ├── .gitignore
 ├── README.md                         # Project documentation
@@ -250,9 +257,10 @@ CryptoSense/
     ├── __init__.py
     ├── core/
     │   ├── config/
-    │   │   └── settings.py           # Dotenv configuration parser
+    │   │   └── settings.py           # Central settings parser
     │   └── utils/
     │       ├── logging.py            # Color-coded logging configuration
+    │       ├── retraining_scheduler.py # APScheduler retraining lifecycle orchestrator
     │       └── signals.py            # Graceful shutdown handler
     ├── data_sources/                 # Ingestion Drivers
     │   ├── binancewebsocket/
@@ -268,19 +276,22 @@ CryptoSense/
     │   └── xquik/
     │       └── xquik_ingestion.py        # Keyword polling & sentiment orchestration
     ├── feature_engineering/          # Aggregation Engines
-    │   ├── trade_aggregator.py       # Computes OHLCV, VWAP, buy/sell ratios
+    │   ├── trade_aggregator.py       # Computes OHLCV, buy/sell ratios, VWAP
     │   ├── orderbook_aggregator.py   # Computes spread averages, depths, and imbalances
-    │   ├── sentiment_aggregator.py   # Computes compound score distribution metrics
+    │   ├── sentiment_aggregator.py   # Computes sentiment distribution metrics
     │   └── sentiment_scorer.py       # FinBERT sentiment scoring implementation
-    ├── models/                       # Deep Learning Engine
+    ├── models/                       # Deep Learning & Decision Engine
     │   ├── lstm_autoencoder.py       # PyTorch LSTM Autoencoder architecture
     │   ├── anomaly_pipeline.py       # Real-time anomaly inference pipeline
+    │   ├── llm_pipeline.py           # Local structured Ollama/Qwen briefings loop
+    │   ├── model_registry.py         # Thread-safe in-memory model hot-swapper
+    │   ├── retraining_service.py     # Reusable training logic for manual & auto runs
     │   └── saved_weights/            # Model parameters directory
-    │       ├── lstm_autoencoder_*.pt # PyTorch model weights (git-ignored)
+    │       ├── lstm_autoencoder_*.pt # PyTorch model weights (usually git-ignored but kept since lightweight)
     │       └── scaler_params_*.json  # Scaler configuration files
     ├── db/                           # TimescaleDB Layer
     │   ├── db.py                     # Thread-safe PgPool connector
-    │   └── db_schema.sql             # SQL migrations setup (Hypertables & indexes)
+    │   └── db_schema.sql             # SQL migrations setup (Hypertables, schemas, indexes)
     └── sinks/                        # Sink Router Layer
         ├── base.py                   # Base interface
         ├── jsonl_sink.py             # Backup JSONL file sink
@@ -291,25 +302,15 @@ CryptoSense/
 
 ## 🚀 Setup & Execution
 
-### 1. Install System Prerequisites
-- **Python Version**: `Python 3.11+`
-- **Database**: Active [TimescaleDB](https://www.timescale.com/) instance (e.g. Timescale Cloud).
+Regardless of whether you run the system inside **Docker** (recommended) or as a **Standalone Local Setup**, you must perform the universal environment and host-level configurations first.
 
-### 2. Clone Repository & Setup Environment
-```bash
-git clone <repository-url>
-cd CryptoSense
+---
 
-# Create and activate virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+### Step 1: Universal Environment Configuration (`.env`)
 
-# Install requirements
-pip install -r requirements.txt
-```
+All core system configurations and API credentials live in a single `.env` file at the root of the project. 
 
-### 3. Configure `.env`
-Create a `.env` file in the project root:
+Create a `.env` file at `C:\Users\Monster\WEB APPS\CryptoSense\.env` and configure your credentials:
 
 ```env
 # ── TimescaleDB Connection DSN ─────────────────────────
@@ -325,34 +326,130 @@ BITQUERY_API_KEY=your_bitquery_key
 BINANCE_SYMBOLS=btcusdt,ethusdt,solusdt,bnbusdt,avaxusdt
 CEX_FLOW_NETWORKS=eth,bsc,solana
 
+# ── Model Retraining Settings ──────────────────────────
+RETRAIN_ENABLED=true
+RETRAIN_INTERVAL_DAYS=14
+RETRAIN_LOOKBACK_DAYS=14
+RETRAIN_DEVICE=auto
+
+# ── Ollama Local LLM Connection Routing ────────────────
+# 1. Local Run: Defaults to http://127.0.0.1:11434 (leave blank or set to local IP)
+# 2. Docker Run: MUST be set to host.docker.internal to bridge the container boundary:
+OLLAMA_HOST=http://host.docker.internal:11434
+
 # ── Log Settings ───────────────────────────────────────
 LOG_LEVEL=INFO
 ```
 
 ---
 
-## 🏃 Operation Guide
+### Step 2: Configure Host Ollama for GPU & Network Access
 
-### 1. Database Migrations
-Run the schema setup script to initialize TimescaleDB hypertables, custom index structures, and the AI anomalies table. Safe to run multiple times:
+By default, the Windows Ollama server only listens on `127.0.0.1` (localhost). To allow the system (and particularly Docker containers) to reach it, we must bind it to all network interfaces (`0.0.0.0`) on the host.
+
+1. **Close Ollama**:
+   * Exit Ollama from the Windows system tray (right-click the Ollama icon and select **Quit**).
+
+2. **Set Windows Environment Variable**:
+   * Open **PowerShell** as Administrator and run:
+     ```powershell
+     [Environment]::SetEnvironmentVariable("OLLAMA_HOST", "0.0.0.0", "User")
+     ```
+   * Alternatively, search for **"Edit the system environment variables"** in the Windows Start Menu, click **Environment Variables**, and add a new User Variable:
+     * **Variable Name**: `OLLAMA_HOST`
+     * **Variable Value**: `0.0.0.0`
+
+3. **Restart Ollama**:
+   * Relaunch **Ollama** from your Start Menu.
+
+4. **Pull the Qwen Model**:
+   * Pull the target schema-locked model in a command prompt or PowerShell window:
+     ```bash
+     ollama pull qwen2.5:7b
+     ```
+   * Verify the model is downloaded and active:
+     ```bash
+     ollama list
+     ```
+
+---
+
+### Option A: Ingestion & Dashboard via Docker Compose (Recommended)
+
+The entire project has been dockerized with support for local GPU hardware acceleration. GPU support is **already configured out-of-the-box** via the pre-packaged `docker-compose.override.yml` file:
+
+```yaml
+services:
+  # Enable GPU hardware acceleration for PyTorch anomaly inference
+  ingestion-pipeline:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+```
+
+#### GPU Verification Troubleshooting Note:
+If you run `wsl nvidia-smi` inside PowerShell and get "command not found", **this will not prevent GPU Docker execution**. Docker Desktop utilizes its own custom backend WSL distributions (`docker-desktop`) and handles the driver paravirtualization mounts dynamically.
+
+To verify Docker has GPU passthrough capabilities, run:
+```powershell
+docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
+```
+If this command displays your NVIDIA GPU status table, your Docker environment is fully GPU-accelerated!
+
+#### Run the Services:
+Ensure your `OLLAMA_HOST` in `.env` is set to `http://host.docker.internal:11434` and run:
+```bash
+docker-compose up --build
+```
+This automatically spins up:
+- **`cryptosense-pipeline`**: Runs `main.py` (Ingestion Streams + PyTorch LSTM Inference + Ollama LLM Briefings).
+- **`cryptosense-api`**: Exposes the FastAPI REST Backend on **`http://localhost:8000`**.
+- **`cryptosense-dashboard`**: Runs the Streamlit interactive dashboard on **`http://localhost:8501`**.
+
+---
+
+### Option B: Standalone Local Setup (Windows / Linux)
+
+#### 1. Setup Local Environment
+```bash
+# Create and activate virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install requirements (compiles PyTorch targets)
+pip install -r requirements.txt
+```
+
+#### 2. Run Database Migrations (Optional)
+On startup, the main orchestrator (`python main.py`) will automatically execute migrations and build your tables. However, you can run this standalone script to manually initialize and verify your TimescaleDB schema beforehand without starting the pipeline streams:
 ```bash
 python -m scripts.run_migration
 ```
 
-### 2. Start the Pipeline Orchestrator
-Start the main program. This connects to Binance futures, starts REST polls, initiates WebSocket whale subscriptions, registers XQuik keyword monitors, and runs the AI Anomaly Engine in the background:
+#### 3. Run the Orchestrator
+Ensure your `OLLAMA_HOST` in `.env` is set to `http://127.0.0.1:11434` (or left blank to default) and run:
 ```bash
 python main.py
 ```
 
-### 3. Model Training Sequence
-To train or update the unsupervised LSTM Autoencoder on clean historical sequences extracted directly from your TimescaleDB instance:
-```bash
-python -m scripts.train_anomaly_detector
-```
-> **Note:** The script will automatically fit custom MinMax normalizers, save them as JSON parameters, optimize the LSTM network weights using an MSE criteria over 100 epochs, and export all assets directly to `src/models/saved_weights/` for instant live reload.
+#### 4. Run Web & API Services
+- **FastAPI REST API**:
+  ```bash
+  uvicorn src.web.api:app --host 0.0.0.0 --port 8000
+  ```
+- **Streamlit Premium Dashboard Grid**:
+  ```bash
+  streamlit run src/web/dashboard.py --server.port 8501 --server.address 0.0.0.0
+  ```
 
-### 4. Diagnostics & Live Inspections
+---
+
+## 🏃 Operations & Diagnostics Suite
+
 You can inspect the state of your database schemas, integration aggregates, and active records at any time:
 - **Test Ingestion Flow (Mock Data)**:
   ```bash
@@ -366,58 +463,19 @@ You can inspect the state of your database schemas, integration aggregates, and 
   ```bash
   python -m scripts.check_live_data
   ```
+- **Pretty-Print Live Anomaly LLM Payloads**:
+  ```bash
+  python -m scripts.inspect_payload
+  ```
+- **LSTM Autoencoder Model Training**:
+  To manually train the unsupervised LSTM network over historical TimescaleDB tables (100 epochs, dynamically writing scalar JSON configurations and Pt weights to `saved_weights/`):
+  ```bash
+  python -m scripts.train_anomaly_detector
+  ```
 
 ---
 
-## 📊 Temporal Alignment & Cross-Table JOINs
-
-Because all 5-minute ingestion buckets share identical boundaries, joining metrics for modeling or downstream analytics is simplified:
-
-```sql
-SELECT
-    t.bucket,
-    t.symbol,
-    t.close AS last_price,
-    t.volume AS trade_volume,
-    o.avg_imbalance AS orderbook_imbalance,
-    s.avg_score AS sentiment_score,
-    s.tweet_count AS total_tweets,
-    COALESCE(c.net_flow_usd, 0.0) AS net_wallet_flow,
-    a.is_anomaly AS ai_anomaly_detected,
-    a.mse_score AS autoencoder_loss
-FROM trade_candles_5m t
-LEFT JOIN orderbook_snapshots_5m o
-    ON t.bucket = o.bucket AND t.symbol = o.symbol
-LEFT JOIN tweet_sentiment_5m s
-    ON t.bucket = s.bucket AND REPLACE(t.symbol, 'USDT', '') = s.symbol
-LEFT JOIN (
-    SELECT bucket, symbol, SUM(net_flow_usd) AS net_flow_usd
-    FROM cex_flows_5m
-    GROUP BY bucket, symbol
-) c
-    ON t.bucket = c.bucket AND REPLACE(t.symbol, 'USDT', '') = c.symbol
-LEFT JOIN ai_anomalies_5m a
-    ON t.bucket = a.bucket AND REPLACE(t.symbol, 'USDT', '') = a.symbol
-WHERE t.symbol = 'BTCUSDT'
-ORDER BY t.bucket DESC
-LIMIT 10;
-```
-
----
-
-## 📈 Asset Matrix
-
-| Symbol | Pair | Trades Stream | Orderbook | Sentiment | CEX Flow Network | AI Anomaly Monitored |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **BTC** | `BTCUSDT` | ✅ | ✅ | ✅ | `ethereum` | ✅ |
-| **ETH** | `ETHUSDT` | ✅ | ✅ | ✅ | `ethereum`, `bsc` | ✅ |
-| **SOL** | `SOLUSDT` | ✅ | ✅ | ✅ | `solana` | ✅ |
-| **BNB** | `BNBUSDT` | ✅ | ✅ | ✅ | `bsc` | ✅ |
-| **AVAX** | `AVAXUSDT` | ✅ | ✅ | ✅ | `bsc`, `ethereum` (wrapped) | ✅ |
-
----
-
-## 💳 Credit & Ingestion Considerations
+## 💳 Credit & Billing Considerations
 
 - **XQuik Keyword Billing**: Active monitors consume **21 credits/hour each** (105 credits/hour total across 5 tracked symbols). Event polling itself is free.
 - **Bitquery Billing**: WebSockets and HTTP GraphQL requests consume credits according to your Bitquery Developer plan. Polling intervals for BSC/AVAX transfers are throttled to 5 minutes to keep credit usage efficient.

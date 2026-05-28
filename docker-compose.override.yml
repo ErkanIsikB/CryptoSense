@@ -1,0 +1,10 @@
+services:
+  # Enable GPU hardware acceleration for PyTorch anomaly inference
+  ingestion-pipeline:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -18,3 +18,13 @@ psycopg2-binary==2.9.12
 python-dotenv==1.2.2
 schedule==1.2.2
 apscheduler==3.10.4
+
+# -- Web & Presentation Layer --
+fastapi==0.136.3
+uvicorn==0.48.0
+streamlit==1.57.0
+altair==6.1.0
+pydantic>=2.0
+
+# -- LLM Client --
+ollama

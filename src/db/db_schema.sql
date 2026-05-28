@@ -125,9 +125,31 @@ SELECT create_hypertable(
     chunk_time_interval => INTERVAL '1 day'
 );
 
+-- ============================================================
+-- 6. LLM Health Scores (5-minute intervals)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS llm_health_scores (
+    bucket          TIMESTAMPTZ     NOT NULL,
+    symbol          TEXT            NOT NULL,
+    health_score    INTEGER         NOT NULL,
+    reasoning       TEXT,
+    explanation     TEXT,
+    model_name      TEXT,
+    latency_ms      INTEGER,
+    input_payload   JSONB,
+    UNIQUE (bucket, symbol)
+);
+
+SELECT create_hypertable(
+    'llm_health_scores', 'bucket',
+    if_not_exists => TRUE,
+    chunk_time_interval => INTERVAL '1 day'
+);
+
 -- ── Indices for common query patterns ───────────────────────
 CREATE INDEX IF NOT EXISTS idx_trade_candles_symbol   ON trade_candles_5m (symbol, bucket DESC);
 CREATE INDEX IF NOT EXISTS idx_orderbook_symbol       ON orderbook_snapshots_5m (symbol, bucket DESC);
 CREATE INDEX IF NOT EXISTS idx_tweet_sentiment_symbol ON tweet_sentiment_5m (symbol, bucket DESC);
 CREATE INDEX IF NOT EXISTS idx_cex_flows_symbol       ON cex_flows_5m (symbol, bucket DESC);
-CREATE INDEX IF NOT EXISTS idx_ai_anomalies_symbol ON ai_anomalies_5m (symbol, bucket DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_anomalies_symbol    ON ai_anomalies_5m (symbol, bucket DESC);
+CREATE INDEX IF NOT EXISTS idx_llm_health_scores_symbol ON llm_health_scores (symbol, bucket DESC);
