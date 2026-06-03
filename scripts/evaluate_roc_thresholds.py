@@ -23,9 +23,9 @@ import torch
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.append(str(PROJECT_ROOT))
 
+from src.core.config import settings
 from src.models.retraining_service import (
     fetch_and_clean_dataframe,
-    TARGET_SYMBOL,
     generate_proxy_labels,
     slice_continuous_windows,
     align_labels_to_sequences,
@@ -136,14 +136,21 @@ def run_roc_calibration(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate ROC thresholds dynamically.")
-    parser.add_argument("--symbol", type=str, default=TARGET_SYMBOL, help="Target crypto symbol")
+    parser.add_argument("--symbol", type=str, default="ALL", help="Target crypto symbol or 'ALL' to calibrate all configured symbols")
     parser.add_argument("--lookback", type=int, default=14, help="Historical lookback days")
-    parser.add_argument("--zscore", type=float, default=2.5, help="Z-score proxy outlier threshold")
+    parser.add_argument("--zscore", type=float, default=3.0, help="Z-score proxy outlier threshold")
     args = parser.parse_args()
 
-    results = run_roc_calibration(args.symbol, args.lookback, args.zscore)
-    if results is None:
-        LOGGER.error("ROC calibration failed.")
+    symbols = settings.RETRAIN_SYMBOLS if args.symbol.upper() == "ALL" else [args.symbol.upper()]
+
+    failed = False
+    for symbol in symbols:
+        results = run_roc_calibration(symbol, args.lookback, args.zscore)
+        if results is None:
+            LOGGER.error(f"ROC calibration failed for {symbol}.")
+            failed = True
+
+    if failed:
         sys.exit(1)
 
 

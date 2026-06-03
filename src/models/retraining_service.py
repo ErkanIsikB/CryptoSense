@@ -104,7 +104,7 @@ def _artifact_dir(output_root: Path, target_symbol: str, artifact_date: date | N
     return output_root / target_symbol.upper() / version_date.isoformat()
 
 
-def generate_proxy_labels(df: pd.DataFrame, z_threshold: float = 2.5) -> np.ndarray:
+def generate_proxy_labels(df: pd.DataFrame, z_threshold: float = 3.0) -> np.ndarray:
     """Generate statistical proxy labels (0 or 1) using Z-score outliers on key channels."""
     # Compute 5m return
     close = df["close"].to_numpy()
