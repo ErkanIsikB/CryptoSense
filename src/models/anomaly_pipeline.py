@@ -16,6 +16,12 @@ from src.models.model_registry import ModelRegistry
 
 LOGGER = logging.getLogger("anomaly_pipeline")
 
+SQL_COLUMNS = [
+    "bucket", "open", "high", "low", "close", "volume", "trade_count", "net_trade", "vwap",
+    "avg_spread", "avg_mid_price", "avg_bid_depth", "avg_ask_depth", "avg_imbalance",
+    "avg_score", "tweet_count", "positive_count", "negative_count", "net_flow_usd"
+]
+
 TRACKED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "AVAXUSDT"]
 
 SEQ_LEN = 12
@@ -67,7 +73,7 @@ ORDER BY final_bucket DESC
 LIMIT %s;
 """
 
-async def fetch_and_scale_latest_window(target_symbol: str, base_symbol: str, scaler_params: dict) -> tuple[torch.Tensor | None, dict | None]:
+async def fetch_and_scale_latest_window(target_symbol: str, scaler_params: dict) -> tuple[torch.Tensor | None, dict | None]:
     rows = await execute_query_fetch_async(SQL_FETCH_LATEST, (target_symbol, SEQ_LEN))
 
     if not rows or len(rows) < SEQ_LEN:
@@ -75,13 +81,7 @@ async def fetch_and_scale_latest_window(target_symbol: str, base_symbol: str, sc
         return None, None
 
     rows = rows[::-1]
-    sql_columns = [
-        "bucket", "open", "high", "low", "close", "volume", "trade_count",
-        "net_trade", "vwap", "avg_spread", "avg_mid_price", "avg_bid_depth",
-        "avg_ask_depth", "avg_imbalance", "avg_score", "tweet_count",
-        "positive_count", "negative_count", "net_flow_usd"
-    ]
-    df = pd.DataFrame(rows, columns=sql_columns)
+    df = pd.DataFrame(rows, columns=SQL_COLUMNS)
     df["bucket"] = pd.to_datetime(df["bucket"], utc=True)
 
     # Safely reorder columns to match scaler JSON feature mapping exactly
@@ -134,14 +134,14 @@ def _legacy_artifacts(symbol: str) -> tuple[Path, Path]:
     )
 
 
-def _resolve_artifact_paths(symbol: str) -> tuple[Path, Path]:
+def resolve_artifact_paths(symbol: str) -> tuple[Path, Path]:
     versioned = _latest_versioned_artifacts(symbol)
     if versioned is not None:
         return versioned
     return _legacy_artifacts(symbol)
 
 
-def _resolve_model_device() -> torch.device:
+def resolve_model_device() -> torch.device:
     configured = settings.RETRAIN_DEVICE
     if configured == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -151,7 +151,7 @@ def _resolve_model_device() -> torch.device:
 
 
 def load_model_into_registry(symbol: str, device: torch.device) -> bool:
-    model_path, scaler_path = _resolve_artifact_paths(symbol)
+    model_path, scaler_path = resolve_artifact_paths(symbol)
 
     if not model_path.exists() or not scaler_path.exists():
         LOGGER.error(f"Missing weights for {symbol}. Skipping this coin.")
@@ -179,7 +179,7 @@ def run_model_inference(model: LSTMAutoencoder, input_tensor: torch.Tensor) -> f
 
 async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
     LOGGER.info("Starting Multi-Coin AI Anomaly Detection Engine...")
-    device = _resolve_model_device()
+    device = resolve_model_device()
 
     loaded_symbols = []
     for symbol in TRACKED_SYMBOLS:
@@ -201,7 +201,7 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
                     continue
 
                 input_tensor, latest_data = await fetch_and_scale_latest_window(
-                    target_symbol, base_symbol, scaler_params
+                    target_symbol, scaler_params
                 )
 
                 if input_tensor is None or latest_data is None:
