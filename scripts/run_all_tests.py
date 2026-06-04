@@ -63,12 +63,36 @@ def main():
     integration_duration = time.time() - integration_start
     integration_log = integration_stream.getvalue()
     
-    # 3. Compile report
+    # 3. Run XQuik Live API tests
+    xquick_passed = True
+    xquick_error = ""
+    xquick_start = time.time()
+    
+    xquick_stream = io.StringIO()
+    original_stdout = sys.stdout
+    sys.stdout = xquick_stream
+    
+    try:
+        import asyncio
+        from tests.test_xquick import test_live_tweets
+        asyncio.run(test_live_tweets())
+    except Exception as e:
+        xquick_passed = False
+        import traceback
+        traceback.print_exc()
+        xquick_error = str(e)
+    finally:
+        sys.stdout = original_stdout
+        
+    xquick_duration = time.time() - xquick_start
+    xquick_log = xquick_stream.getvalue()
+    
+    # 4. Compile report
     total_tests = unit_result.testsRun
     failed_tests = len(unit_result.failures) + len(unit_result.errors)
     passed_tests = total_tests - failed_tests
     
-    status = "SUCCESS" if (failed_tests == 0 and integration_passed) else "FAILED"
+    status = "SUCCESS" if (failed_tests == 0 and integration_passed and xquick_passed) else "FAILED"
     
     report = []
     report.append("# CryptoSense Automated Test Suite Execution Report")
@@ -82,9 +106,10 @@ def main():
     report.append("| :--- | :--- | :--- | :--- | :--- |")
     report.append(f"| Unit Tests | {total_tests} | {passed_tests} | {failed_tests} | {unit_duration:.3f}s |")
     report.append(f"| Database Integration | 2 | {2 if integration_passed else 0} | {0 if integration_passed else 2} | {integration_duration:.3f}s |")
+    report.append(f"| XQuik Live API | 1 | {1 if xquick_passed else 0} | {0 if xquick_passed else 1} | {xquick_duration:.3f}s |")
     report.append("")
     
-    if failed_tests > 0 or not integration_passed:
+    if failed_tests > 0 or not integration_passed or not xquick_passed:
         report.append("## ❌ Failures Details")
         for failure in unit_result.failures:
             report.append(f"### Unit Test Failure: `{failure[0]}`")
@@ -106,6 +131,14 @@ def main():
                 report.append(f"Error details: {integration_error}")
             report.append("```")
             report.append("")
+        if not xquick_passed:
+            report.append("### XQuik Live API Test Failure")
+            report.append("```")
+            report.append(xquick_log)
+            if xquick_error:
+                report.append(f"Error details: {xquick_error}")
+            report.append("```")
+            report.append("")
             
     report.append("## Detailed Execution Logs")
     report.append("### Unit Tests")
@@ -116,6 +149,11 @@ def main():
     report.append("### Database Integration (Transaction-Isolated)")
     report.append("```")
     report.append(integration_log)
+    report.append("```")
+    report.append("")
+    report.append("### XQuik Live API")
+    report.append("```")
+    report.append(xquick_log)
     report.append("```")
     report.append("")
     

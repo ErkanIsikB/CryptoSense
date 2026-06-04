@@ -467,6 +467,7 @@ python scripts/run_all_tests.py
 This discovers and executes:
 - **Unit tests** covering model dimensions, data scaling/sliding windows, FinBERT classification (Macro F1 validation), database routing adapters, system signal handlers, and scheduler lifecycles.
 - **Database integration tests** running inside a mock-patched, transaction-isolated wrapper (`ROLLBACK`) that tests aggregators and selects records without writing permanent data to your tables.
+- **XQuik functionality test** simulating tweet ingestion for a short duration.
 
 At completion, a detailed Markdown summary report is written directly to [test_report.md](file:///c:/Users/Monster/WEB%20APPS/CryptoSense/test_report.md) in the project root.
 

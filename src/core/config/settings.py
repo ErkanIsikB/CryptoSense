@@ -92,21 +92,6 @@ ENABLED_CATEGORIES: set[str] = {
 # ── Bitquery ──────────────────────────────────────────────────────────
 BITQUERY_API_KEY: str = os.getenv("BITQUERY_API_KEY", "").strip()
 
-# ── Sentiment (Tavily) ─────────────────────────────────────────────────
-TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "").strip()
-TAVILY_API_URL: str = os.getenv("TAVILY_API_URL", "https://api.tavily.com/search")
-SENTIMENT_INTERVAL_MINUTES: int = int(os.getenv("SENTIMENT_INTERVAL_MINUTES", "120"))
-SENTIMENT_SEARCH_DEPTH: str = os.getenv("SENTIMENT_SEARCH_DEPTH", "advanced").strip() or "advanced"
-SENTIMENT_MAX_TOKENS_PER_CYCLE: int = max(1, int(os.getenv("SENTIMENT_MAX_TOKENS_PER_CYCLE", "5")))
-SENTIMENT_TIMEOUT_S: float = float(os.getenv("SENTIMENT_TIMEOUT_S", "20"))
-SENTIMENT_INCLUDE_ANSWER: bool = (
-    os.getenv("SENTIMENT_INCLUDE_ANSWER", "true").strip().lower() in {"1", "true", "yes"}
-)
-SENTIMENT_INCLUDE_IMAGES: bool = (
-    os.getenv("SENTIMENT_INCLUDE_IMAGES", "false").strip().lower() in {"1", "true", "yes"}
-)
-SENTIMENT_MAX_RETRIES: int = max(0, int(os.getenv("SENTIMENT_MAX_RETRIES", "2")))
-
 # ── Database (TimescaleDB) ────────────────────────────────────
 DB_URL: str = os.getenv("DB_URL", "").strip()
 
