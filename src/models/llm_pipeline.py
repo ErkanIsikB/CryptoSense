@@ -29,58 +29,91 @@ TRACKED_SYMBOLS = ["BTC", "ETH", "SOL", "BNB", "AVAX"]
 class CryptoSenseBrief(BaseModel):
     """Pydantic schema to enforce strict, schema-locked token output from Ollama."""
 
-    market_health_score: int = Field(
-        ...,
-        description="An integer from 0 to 100 representing structural stability (0=Total Liquidity/Sentiment Collapse, 100=Perfect Symmetrical Health).",
-    )
     primary_metric_driver: Literal[
         "volume_spike", "liquidity_flight", "sentiment_shift", "on_chain_whale_flow", "none"
     ]
     market_trajectory_summary: str = Field(
         ...,
-        description="A strict, factual 3-sentence quantitative summary explaining how the metric vectors shifted or escalated over the last hour.",
+        description="A strict, factual 3-sentence quantitative summary explaining the WHY behind the deterministic health score.",
     )
     trustworthiness_classification: Literal[
         "HIGH_CONVICTION", "LOW_TRUST_SPECULATIVE", "LIQUIDITY_EXHAUSTION", "STABLE_BASELINE"
     ]
 
 
+def calculate_deterministic_health_score(ctx: dict[str, Any]) -> int:
+    """Calculate Market Health Score (0-100) deterministically from raw payloads."""
+    score = 50.0
+    latest = ctx.get("raw_payload", {})
+    market = latest.get("market_data", {})
+    sentiment = latest.get("sentiment", {})
+    on_chain = latest.get("on_chain", {})
+    alert = ctx.get("macro_alert", {})
+
+    # 1. Market Imbalance Impact (-15 to +15)
+    imbalance = market.get("imbalance", 0.0)
+    score += imbalance * 15.0
+
+    # 2. Sentiment Impact (-20 to +20)
+    retail_score = sentiment.get("retail_avg_score", 0.0)
+    inst_score = sentiment.get("institutional_avg_score", 0.0)
+    
+    # 70% Institutional News, 30% Retail Twitter (Anti-Fake News mechanism)
+    blended_sentiment = (inst_score * 0.70) + (retail_score * 0.30)
+    score += blended_sentiment * 20.0
+
+    # 3. On-chain Impact (-10 to +10)
+    # Net flow positive = money entering CEX (bearish), negative = leaving CEX (bullish)
+    flow = on_chain.get("net_cex_flow_usd", 0.0)
+    if flow > 1_000_000:
+        score -= 10
+    elif flow < -1_000_000:
+        score += 10
+    
+    # 4. Anomaly Penalty (-20)
+    if alert.get("is_anomaly"):
+        score -= 20
+        
+    return int(max(0, min(100, score)))
+
+
 # ── 2. Prompts Configuration ─────────────────────────────────────────
 
 
-SYSTEM_PROMPT = """You are the automated macro analytical sub-module for the CryptoSense pipeline. Your single job is to interpret an incoming time-series matrix containing exactly 12 chronological slices of 5-minute payload blocks.
+SYSTEM_PROMPT = """You are an Expert Portfolio Manager and Macro Analyst for CryptoSense. 
+Your single job is to interpret a 12-candle data sequence and a deterministically calculated Health Score (0-100).
 
 CRITICAL INSTRUCTIONS FOR FACTUAL DETERMINISM:
-1. Grounding Barrier: You are strictly forbidden from extrapolating, predicting, or projecting future asset performance. Only describe what has factually occurred within the 1-hour boundaries provided.
-2. Value Locking: Never cite a metric, volume figure, or price point that is not explicitly written inside the data context string.
-3. Fallback Grounding: If an incoming feature reads 0.0 (such as net_cex_flow_usd or tweet_count), treat this as an active state of silence or no-activity. Do not assume or guess why it is zero; simply state that the metric was inactive for that bucket block.
-4. Formatting: You must respond exclusively using the structured JSON keys provided. Do not append introduction remarks, conversational greetings, or concluding pleasantries."""
+1. You DO NOT calculate the health score. The system provides it. Your job is to EXPLAIN WHY the score is what it is using traditional trading principles (Liquidity, Whale Flows, Sentiment Shifts).
+2. Grounding Barrier: You are strictly forbidden from hallucinating data. Only use the metrics provided in the JSON payload.
+3. Fallback Grounding: If an incoming feature reads 0.0 (such as net_cex_flow_usd or tweet_count), treat this as an active state of silence or no-activity.
+4. Formatting: You must respond exclusively using the structured JSON keys provided."""
 
 
-def build_user_prompt(symbol: str, ctx: dict[str, Any]) -> str:
+def build_user_prompt(symbol: str, ctx: dict[str, Any], health_score: int) -> str:
     """Construct the standardized, factually bounded prompt context for Ollama."""
     alert = ctx["macro_alert"]
     bucket_dt = ctx["latest_bucket"]
     bucket_str = bucket_dt.isoformat() if hasattr(bucket_dt, "isoformat") else str(bucket_dt)
 
     return f"""======================================================================
-GLOBAL MACRO EVALUATION ALERT HEADER (LATEST TIMESTAMP ONLY)
+GLOBAL MACRO EVALUATION ALERT HEADER
 Target Asset: {symbol}
 Live Interval Boundary: {bucket_str}
+DETERMINISTIC HEALTH SCORE: {health_score}/100
 AI Engine Anomaly Status: {alert['is_anomaly']}
-Reconstruction Error (MSE): {alert['mse_score']:.6f} (System Threshold: 0.008)
+Reconstruction Error (MSE): {alert['mse_score']:.6f}
 ======================================================================
 
-The PyTorch LSTM model evaluated the exact 1-hour chronological history leading up to this interval and triggered the master engine metrics shown above. 
+The PyTorch LSTM model evaluated the exact 1-hour chronological history leading up to this interval. 
 
-Analyze the raw feature matrix below to diagnose what structural shift caused the machine learning model to register this specific reconstruction error footprint. Notice that historical anomaly tracking has been stripped to preserve timeline purity:
+Analyze the raw feature matrix below to diagnose why the algorithmic health score is {health_score}/100. Apply portfolio management principles to explain this score to a client.
 
 [RAW 1-HOUR DATA TIMELINE (Oldest to Newest)]
 {json.dumps(ctx['clean_sequence'], indent=2)}
 
 CORE DIRECTIVES:
-1. Calculate a Market Health Score from 0 to 100. Deduct points heavily if orderbook ask/bid depths hollow out below baseline averages while price experiences sudden volatility, or if social volume indicators drop off during market movements.
-2. Formulate your short explanation exactly in a 3-sentence trajectory overview style for an executive project report. Focus entirely on the delta shift of the final 5-minute window compared to the preceding 11 data rows."""
+1. Formulate your short explanation exactly in a 3-sentence trajectory overview style for an executive project report. Focus entirely on the delta shift of the final 5-minute window compared to the preceding 11 data rows."""
 
 
 # ── 3. Data Sifting & Failsafe Database Ingestion ───────────────────
@@ -181,9 +214,9 @@ async def fetch_12_candle_sequence(
 # ── 4. Asynchronous Ollama Inference ───────────────────────────────────
 
 
-async def run_qwen_inference(symbol: str, ctx: dict[str, Any]) -> dict[str, Any]:
+async def run_qwen_inference(symbol: str, ctx: dict[str, Any], health_score: int) -> dict[str, Any]:
     """Execute structured Qwen 2.5 local model inference via Ollama."""
-    user_prompt = build_user_prompt(symbol, ctx)
+    user_prompt = build_user_prompt(symbol, ctx, health_score)
     start_time = time.time()
 
     def call_ollama() -> dict[str, Any]:
@@ -205,7 +238,6 @@ async def run_qwen_inference(symbol: str, ctx: dict[str, Any]) -> dict[str, Any]
     except Exception as exc:
         LOGGER.exception("Ollama inference or parsing failure: %s", exc)
         parsed_result = {
-            "market_health_score": 50,
             "primary_metric_driver": "none",
             "market_trajectory_summary": f"Fallback error: Failed to parse Qwen JSON output. {exc}",
             "trustworthiness_classification": "LOW_TRUST_SPECULATIVE",
@@ -219,7 +251,7 @@ async def run_qwen_inference(symbol: str, ctx: dict[str, Any]) -> dict[str, Any]
 
 
 async def write_health_score(
-    bucket: datetime, symbol: str, result: dict[str, Any], clean_sequence: list[dict[str, Any]]
+    bucket: datetime, symbol: str, result: dict[str, Any], clean_sequence: list[dict[str, Any]], deterministic_score: int
 ) -> None:
     """Save the health score, executive summary, and 12-candle sequence payload."""
     sql = """
@@ -243,7 +275,7 @@ async def write_health_score(
             (
                 bucket,
                 symbol,
-                max(0, min(100, result.get("market_health_score", 50))),
+                deterministic_score,
                 reasoning_str,
                 result.get("market_trajectory_summary", ""),
                 "qwen2.5:7b",
@@ -289,19 +321,21 @@ async def start_llm_decision_stream(stop_event: asyncio.Event) -> None:
                 if ctx is None:
                     continue
 
+                deterministic_score = calculate_deterministic_health_score(ctx)
+
                 LOGGER.info("🧠 Running structured Qwen 2.5 inference for %s...", symbol)
-                result = await run_qwen_inference(symbol, ctx)
+                result = await run_qwen_inference(symbol, ctx, deterministic_score)
 
                 LOGGER.info(
-                    "📊 %s brief completed in %dms. Score: %d/100 | Driver: %s",
+                    "📊 %s brief completed in %dms. Det. Score: %d/100 | Driver: %s",
                     symbol,
                     result.get("latency_ms", 0),
-                    result.get("market_health_score", 50),
+                    deterministic_score,
                     result.get("primary_metric_driver", "none"),
                 )
 
                 # Persist score and clean sequence block
-                await write_health_score(ctx["latest_bucket"], symbol, result, ctx["clean_sequence"])
+                await write_health_score(ctx["latest_bucket"], symbol, result, ctx["clean_sequence"], deterministic_score)
 
         except Exception as exc:
             LOGGER.exception("Error in LLM decision cycle: %s", exc)

@@ -39,23 +39,21 @@ async def test_live_tweets():
     LOGGER.info("⏳ Starting self-contained XQuik Live Tweet Test (no local module dependencies)...")
     api_key = settings.XQUIK_API
     if not api_key:
-        LOGGER.error("❌ XQUIK_API key is not configured in settings (.env)")
-        return
+        raise ValueError("XQUIK_API key is not configured in settings (.env)")
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         # Step 1: List existing monitors
         try:
             monitors = await list_monitors(client)
             if not monitors:
-                LOGGER.error("❌ No existing keyword monitors found in your account!")
-                return
+                raise RuntimeError("No existing keyword monitors found in your account!")
             
             LOGGER.info(f"📋 Found {len(monitors)} existing monitors:")
             for m in monitors:
                 LOGGER.info(f"   - ID: {m.get('id')} | Query: '{m.get('query')}' | Active: {m.get('isActive')}")
         except Exception as e:
             LOGGER.exception(f"❌ Failed to list monitors: {e}")
-            return
+            raise
 
         activated_monitors = []
         

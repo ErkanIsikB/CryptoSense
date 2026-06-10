@@ -19,7 +19,8 @@ LOGGER = logging.getLogger("anomaly_pipeline")
 SQL_COLUMNS = [
     "bucket", "open", "high", "low", "close", "volume", "trade_count", "net_trade", "vwap",
     "avg_spread", "avg_mid_price", "avg_bid_depth", "avg_ask_depth", "avg_imbalance",
-    "avg_score", "tweet_count", "positive_count", "negative_count", "net_flow_usd"
+    "avg_score", "tweet_count", "positive_count", "negative_count", "net_flow_usd",
+    "news_avg_score"
 ]
 
 TRACKED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "AVAXUSDT"]
@@ -58,7 +59,8 @@ SELECT
     s.tweet_count, 
     s.positive_count, 
     s.negative_count,
-    COALESCE(c.net_flow_usd, 0.0) AS net_flow_usd
+    COALESCE(c.net_flow_usd, 0.0) AS net_flow_usd,
+    COALESCE(ns.avg_score, 0.0) AS news_avg_score
 FROM finalized_buckets fb
 JOIN trade_candles_5m t ON t.bucket = fb.bucket AND t.symbol = fb.symbol
 JOIN orderbook_snapshots_5m o ON o.bucket = fb.bucket AND o.symbol = fb.symbol
@@ -68,6 +70,7 @@ LEFT JOIN (
     FROM cex_flows_5m 
     GROUP BY bucket, symbol
 ) c ON c.bucket = fb.bucket AND c.symbol = TRIM(REPLACE(fb.symbol, 'USDT', ''))
+LEFT JOIN news_sentiment_5m ns ON ns.bucket = fb.bucket AND ns.symbol = REPLACE(fb.symbol, 'USDT', '')
 WHERE fb.symbol = %s
 ORDER BY final_bucket DESC
 LIMIT %s;
@@ -237,7 +240,8 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
                         "ask_depth": round(latest_data["avg_ask_depth"], 2)
                     },
                     "sentiment": {
-                        "avg_score": round(latest_data["avg_score"], 3),
+                        "retail_avg_score": round(latest_data["avg_score"], 3),
+                        "institutional_avg_score": round(latest_data.get("news_avg_score", 0.0), 3),
                         "tweet_count": int(latest_data["tweet_count"]),
                         "positive_count": int(latest_data["positive_count"]),
                         "negative_count": int(latest_data["negative_count"])
