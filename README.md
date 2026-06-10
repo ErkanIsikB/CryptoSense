@@ -242,7 +242,7 @@ TimescaleDB manages temporal data alignment seamlessly. All core tables are init
   * **Market Imbalance (30% weight, [-15, +15])**: Computed from the orderbook bid/ask depth ratio.
   * **Blended Sentiment (40% weight, [-20, +20])**: Combines **70% Institutional RSS news** and **30% Retail Twitter (XQuik)** to provide an anti-manipulation sentiment filter.
   * **On-Chain Flow (30% weight, [-15, +15])**: Hyperbolic tangent (`tanh`) scaling dynamically maps CEX net flow USD:
-    $$\text{Flow Impact} = -15.0 \times \tanh\left(\frac{\text{net\_cex\_flow\_usd}}{2,500,000.0}\right)$$
+    $$\text{Flow Impact} = -15.0 \times \tanh\left(\frac{\text{Net CEX Flow USD}}{2,500,000.0}\right)$$
   * **Dynamic Anomaly Impact (range: -25.0 to +12.5)**: Triggered by the LSTM Autoencoder's reconstruction error (MSE) relative to the threshold:
     * *Bullish Anomaly*: A dynamic volatility boost of up to $+12.5$ points if price is above VWAP, net trade is positive, or sentiment is bullish.
     * *Bearish Anomaly*: A dynamic penalty of up to $-25.0$ points if indicators point downward.
