@@ -14,6 +14,7 @@ graph TD
     subgraph Ingestion ["Ingestion Layer"]
         BWS[Binance WebSocket <br/> Trades & Orderbook]
         XQ[XQuik REST API <br/> Twitter Tweets]
+        RSS[RSS Feeds <br/> Tier-1 Crypto News]
         B_CEX[Bitquery HTTP Poll <br/> 5m CEX Fund Flows]
         B_WS[Bitquery WebSockets <br/> whale_trades, evm, solana]
         B_HTTP[Bitquery HTTP Poll <br/> bnb & avax transfers]
@@ -23,7 +24,8 @@ graph TD
     subgraph Processing ["Feature Engineering & ML Layer"]
         TA[TradeAggregator <br/> 5-min OHLCV & Volume]
         OA[OrderbookAggregator <br/> 5-min Average Depth & Spread]
-        SA[SentimentAggregator <br/> 5-min FinBERT Sentiment]
+        SA[SentimentAggregator <br/> 5-min Tweet Sentiment]
+        NA[News Ingestion Scorer <br/> 5-min RSS News Sentiment]
         FS[FinBERT Model <br/> scoring compound scores]
     end
 
@@ -32,6 +34,7 @@ graph TD
         T_TC[(trade_candles_5m)]
         T_OS[(orderbook_snapshots_5m)]
         T_TS[(tweet_sentiment_5m)]
+        T_NS[(news_sentiment_5m)]
         T_CF[(cex_flows_5m)]
         T_ANOM[(ai_anomalies_5m)]
         T_LLM[(llm_health_scores)]
@@ -60,6 +63,7 @@ graph TD
     BWS --> TA
     BWS --> OA
     XQ --> FS --> SA
+    RSS --> FS --> NA
     B_CEX --> T_CF
     B_WS --> Storage
     B_HTTP --> Storage
@@ -67,10 +71,12 @@ graph TD
     TA --> T_TC
     OA --> T_OS
     SA --> T_TS
+    NA --> T_NS
     
     T_TC --> AP
     T_OS --> AP
     T_TS --> AP
+    T_NS --> AP
     T_CF --> AP
     
     AP --> SCALER --> LSTM
@@ -84,7 +90,7 @@ graph TD
     RS -->|Optimize weights & Hot-swap| LSTM
     RS -->|Update mins/maxs| SCALER
     
-    T_TC & T_OS & T_TS & T_CF & T_ANOM & T_LLM --> API
+    T_TC & T_OS & T_TS & T_NS & T_CF & T_ANOM & T_LLM --> API
     API --> DASH
 
     style ML_Engine fill:#2d1a47,stroke:#953df4,stroke-width:2px,color:#fff
@@ -115,9 +121,10 @@ CryptoSense implements a dual-method data extraction pipeline to optimize both r
   - *Tracked Pairs*: `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `BNBUSDT`, `AVAXUSDT`.
 - **Orderbook Depth**: REST polling of active order book snapshots (top 20 bid/ask levels) every ~2.0 seconds to track depth and compute imbalance indexes.
 
-### 2. Social Sentiment (XQuik & FinBERT)
+### 2. Social & News Sentiment (XQuik, RSS & FinBERT)
 - **X (Twitter) Monitoring**: Real-time keyword monitoring via the [XQuik](https://xquik.com) platform, checking keyword filters every 1 second server-side.
-- **Sentiment Inference**: Events are polled every 5 minutes and run locally through a pipeline-integrated `ProsusAI/FinBERT` Hugging Face model to score sentiment on a `[-1.0, +1.0]` (negative to positive) compound scale.
+- **Institutional News Ingestion (RSS)**: Background polling of Tier-1 crypto news feeds (CoinDesk, CoinTelegraph, CryptoPanic, CryptoSlate, NewsBTC) every 5 minutes.
+- **Sentiment Inference**: Twitter and news events are processed and run locally through a pipeline-integrated `ProsusAI/FinBERT` Hugging Face model to score sentiment on a `[-1.0, +1.0]` (negative to positive) compound scale. News scoring is optimized using batch inference to maximize GPU/CPU hardware utilization.
 
 ### 3. On-Chain Exchange & Whale Flow (Bitquery GraphQL v2)
 Bitquery integration is heavily optimized using both HTTP polling and subscription mechanisms:
@@ -170,6 +177,18 @@ TimescaleDB manages temporal data alignment seamlessly. All core tables are init
 | `neutral_count` | INTEGER | Tweets scoring between `-0.1` and `+0.1` |
 | `max_score` / `min_score` | DOUBLE PRECISION | Extremes of FinBERT scores observed in bucket |
 | `sample_tweet` | TEXT | Text of the tweet with highest community engagement |
+
+### 3.5. `news_sentiment_5m` — RSS News Sentiment Metrics
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `bucket` 🔑 | TIMESTAMPTZ | 5-minute bucket start timestamp |
+| `symbol` 🔑 | TEXT | Unified token symbol (e.g. `BTC`) |
+| `avg_score` | DOUBLE PRECISION | Average FinBERT score `[-1, +1]` |
+| `news_count` | INTEGER | Total scored news articles in bucket |
+| `positive_count` | INTEGER | Articles with compound score > `+0.2` |
+| `negative_count` | INTEGER | Articles with compound score < `-0.2` |
+| `neutral_count` | INTEGER | Articles scoring between `-0.2` and `+0.2` |
+| `sample_headline` | TEXT | Combined source, title, and description snippet |
 
 ### 4. `cex_flows_5m` — Exchange Fund Flow Metrics
 | Column | Type | Description |
@@ -252,9 +271,10 @@ CryptoSense/
 ├── scripts/                          # Utility & Diagnostics Suite
 │   ├── run_all_tests.py              # Test runner executing unit & transaction-isolated tests
 │   ├── check_live_data.py            # Diagnostic script to print the latest DB entries
-│   ├── cleanup_test_data.py          # Development cleanup utility
+│   ├── evaluate_roc_thresholds.py    # Offline ROC & AUC threshold calibrator (Phase 3)
 │   ├── inspect_payload.py            # Pretty-prints latest anomaly LLM payload from TimescaleDB
 │   ├── run_migration.py              # Standalone migration script
+│   ├── simulate_anomaly.py           # Anomaly and LLM pipeline simulator (Phase 3)
 │   ├── train_anomaly_detector.py     # Unsupervised model training on TimescaleDB data
 │   └── verify_db.py                  # Standalone verification script for TimescaleDB tables
 ├── tests/                            # Automated Testing Suite
@@ -286,8 +306,9 @@ CryptoSense/
     │   │   ├── ws_evm_transfers.py       # ETH/EVM transfers WebSocket subscription
     │   │   ├── ws_solana_transfers.py    # Solana transfers WebSocket subscription
     │   │   └── ws_whale_trades.py        # DEX whale trades WebSocket subscription
-    │   └── xquik/
-    │       └── xquik_ingestion.py        # Keyword polling & sentiment orchestration
+    │   ├── xquik/
+    │   │   └── xquik_ingestion.py        # Keyword polling & sentiment orchestration
+    │   └── news_rss_ingestion.py         # Institutional news RSS polling pipeline (Phase 3)
     ├── feature_engineering/          # Aggregation Engines
     │   ├── trade_aggregator.py       # Computes OHLCV, buy/sell ratios, VWAP
     │   ├── orderbook_aggregator.py   # Computes spread averages, depths, and imbalances
