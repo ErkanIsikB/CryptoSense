@@ -22,6 +22,7 @@ from src.core.utils.signals import setup_signals
 from src.data_sources.binancewebsocket.ws_trades_ingestion import start_trade_stream
 from src.data_sources.binancewebsocket.ws_orderbook_ingestion import start_orderbook_stream
 from src.data_sources.xquik.xquik_ingestion import start_xquik_sentiment_stream
+from src.data_sources.news_rss_ingestion import start_news_rss_stream
 from src.data_sources.bitquery.cex_flow_ingestion import start_cex_flow_stream
 
 from src.models.anomaly_pipeline import start_anomaly_stream
@@ -88,6 +89,13 @@ async def _run_all() -> None:
         tasks.append(xquik_task)
     else:
         LOGGER.warning("XQUIK_API not set — tweet sentiment pipeline disabled")
+
+    # 3.5 Institutional News RSS Sentiment (Phase 3)
+    news_task = asyncio.create_task(
+        start_news_rss_stream(stop),
+        name="news_rss_sentiment",
+    )
+    tasks.append(news_task)
 
     # 4. CEX Flows — Bitquery HTTP polling every 5 minutes
     if settings.BITQUERY_API_KEY:

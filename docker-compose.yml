@@ -10,6 +10,13 @@ services:
     restart: always
     env_file:
       - .env
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     extra_hosts:
       - "host.docker.internal:host-gateway"
     logging:
