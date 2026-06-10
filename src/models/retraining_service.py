@@ -71,7 +71,8 @@ SELECT
     s.tweet_count, 
     s.positive_count, 
     s.negative_count,
-    COALESCE(c.net_flow_usd, 0.0) AS net_flow_usd
+    COALESCE(c.net_flow_usd, 0.0) AS net_flow_usd,
+    COALESCE(ns.avg_score, 0.0) AS news_avg_score
 FROM finalized_buckets fb
 JOIN trade_candles_5m t ON t.bucket = fb.bucket AND t.symbol = fb.symbol
 JOIN orderbook_snapshots_5m o ON o.bucket = fb.bucket AND o.symbol = fb.symbol
@@ -81,6 +82,7 @@ LEFT JOIN (
     FROM cex_flows_5m 
     GROUP BY bucket, symbol
 ) c ON c.bucket = fb.bucket AND c.symbol = TRIM(REPLACE(fb.symbol, 'USDT', ''))
+LEFT JOIN news_sentiment_5m ns ON ns.bucket = fb.bucket AND ns.symbol = REPLACE(fb.symbol, 'USDT', '')
 WHERE fb.symbol = %s
   AND fb.bucket >= NOW() - %s::interval
 ORDER BY final_bucket ASC;

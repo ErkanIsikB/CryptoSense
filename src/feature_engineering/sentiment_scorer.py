@@ -1,4 +1,4 @@
-"""Sentiment Scorer — runs FinBERT on Tavily search results and writes numeric
+"""Sentiment Scorer — runs FinBERT on XQuik search results and writes numeric
 scores to TimescaleDB.
 
 The model ``ProsusAI/finbert`` is a finance-domain BERT that classifies text

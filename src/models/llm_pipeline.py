@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -45,16 +46,16 @@ def calculate_deterministic_health_score(ctx: dict[str, Any]) -> int:
     """Calculate Market Health Score (0-100) deterministically from raw payloads."""
     score = 50.0
     latest = ctx.get("raw_payload", {})
-    market = latest.get("market_data", {})
+    orderbook = latest.get("orderbook", {})
     sentiment = latest.get("sentiment", {})
     on_chain = latest.get("on_chain", {})
     alert = ctx.get("macro_alert", {})
 
-    # 1. Market Imbalance Impact (-15 to +15)
-    imbalance = market.get("imbalance", 0.0)
+    # 1. Market Imbalance Impact (-15 to +15) [Weight: 30%]
+    imbalance = orderbook.get("avg_imbalance", 0.0)
     score += imbalance * 15.0
 
-    # 2. Sentiment Impact (-20 to +20)
+    # 2. Sentiment Impact (-20 to +20) [Weight: 40%]
     retail_score = sentiment.get("retail_avg_score", 0.0)
     inst_score = sentiment.get("institutional_avg_score", 0.0)
     
@@ -62,17 +63,48 @@ def calculate_deterministic_health_score(ctx: dict[str, Any]) -> int:
     blended_sentiment = (inst_score * 0.70) + (retail_score * 0.30)
     score += blended_sentiment * 20.0
 
-    # 3. On-chain Impact (-10 to +10)
-    # Net flow positive = money entering CEX (bearish), negative = leaving CEX (bullish)
+    # 3. On-chain Impact (-15 to +15) [Weight: 30%]
+    # Scale continuously using tanh. Bearish when positive (CEX inflow), bullish when negative.
     flow = on_chain.get("net_cex_flow_usd", 0.0)
-    if flow > 1_000_000:
-        score -= 10
-    elif flow < -1_000_000:
-        score += 10
-    
-    # 4. Anomaly Penalty (-20)
+    # Scale factor of $2.5M USD represents a significant 5-min flow
+    flow_impact = -15.0 * math.tanh(flow / 2_500_000.0)
+    score += flow_impact
+
+    # 4. Dynamic Anomaly Penalty / Volatility Boost
+    # Scale impact dynamically based on reconstruction error (MSE) relative to the optimal threshold
     if alert.get("is_anomaly"):
-        score -= 20
+        mse = alert.get("mse_score", 0.0)
+        threshold = alert.get("threshold", 0.008)
+        if threshold <= 0:
+            threshold = 0.008
+        
+        # Calculate dynamic magnitude based on the excess ratio above the threshold
+        # This scales smoothly from 0.0 up to a cap of 25.0 (reached when MSE is double the threshold)
+        ratio = mse / threshold
+        excess_ratio = ratio - 1.0
+        magnitude = min(25.0, 25.0 * excess_ratio)
+        
+        # Extract features for direction scoring
+        market_data = latest.get("market_data", {})
+        net_trade = market_data.get("net_trade", 0.0)
+        close_price = market_data.get("close_price", 0.0)
+        vwap = market_data.get("vwap", 0.0)
+        
+        # Compute ternary direction flags (1.0 = Bullish, -1.0 = Bearish, 0.0 = Neutral)
+        f_price = 1.0 if close_price > vwap else -1.0 if close_price < vwap else 0.0
+        f_trade = 1.0 if net_trade > 0.0 else -1.0 if net_trade < 0.0 else 0.0
+        f_sentiment = 1.0 if blended_sentiment > 0.1 else -1.0 if blended_sentiment < -0.1 else 0.0
+        
+        # Combine using a weighted direction score (perfectly bounded between -1.0 and +1.0)
+        # 40% Price Momentum, 30% Net Trade Momentum, 30% Sentiment Momentum
+        direction_score = (f_price * 0.40) + (f_trade * 0.30) + (f_sentiment * 0.30)
+        
+        if direction_score > 0:
+            # Bullish anomaly (volatility pump/surge): rewards health score (scaled by 50% max magnitude)
+            score += magnitude * direction_score * 0.5
+        else:
+            # Bearish anomaly (panic sell/dump): penalizes health score (scales up to 100% max magnitude)
+            score += magnitude * direction_score
         
     return int(max(0, min(100, score)))
 
@@ -199,6 +231,7 @@ async def fetch_12_candle_sequence(
             macro_alert_header = {
                 "is_anomaly": ai_engine.get("is_statistical_anomaly", False),
                 "mse_score": ai_engine.get("reconstruction_error", 0.0),
+                "threshold": ai_engine.get("optimal_threshold", 0.008),
                 "severity": ai_engine.get("severity", "NORMAL"),
             }
             clean_sequence.append(payload)

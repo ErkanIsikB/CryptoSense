@@ -218,15 +218,20 @@ TimescaleDB manages temporal data alignment seamlessly. All core tables are init
 * Scheduled retraining runs continuously in the background via `APScheduler` ID `retrain_job` if `RETRAIN_ENABLED=true` is set.
 * Generates sliding continuous sequence windows from historical DB hypertables, trains a fresh model, writes parameters atomically, and dynamically updates the running in-memory model registry (`ModelRegistry`) using zero-downtime hot-swapping.
 
-### 3. Local Ollama LLM Decision Stream
-* The LLM Stream (`src/models/llm_pipeline.py`) aligns with the 5-minute mark (+35 seconds padding).
-* Takes the 12-candle historical sequence and pipes it through a system-grounded prompt to **Ollama** running `qwen2.5:7b`.
-* Enforces strict, schema-locked token outputs mapped directly to a Pydantic structure (`CryptoSenseBrief`):
+### 3. Deterministic Health Score & Local Ollama LLM Briefing
+* **Deterministic Health Score (0-100)**: Calculated in Python before LLM inference to ensure absolute numerical reproducibility:
+  * **Market Imbalance (30% weight, [-15, +15])**: Computed from the orderbook bid/ask depth ratio.
+  * **Blended Sentiment (40% weight, [-20, +20])**: Combines **70% Institutional RSS news** and **30% Retail Twitter (XQuik)** to provide an anti-manipulation sentiment filter.
+  * **On-Chain Flow (30% weight, [-15, +15])**: Hyperbolic tangent (`tanh`) scaling dynamically maps CEX net flow USD:
+    $$\text{Flow Impact} = -15.0 \times \tanh\left(\frac{\text{net\_cex\_flow\_usd}}{2,500,000.0}\right)$$
+  * **Dynamic Anomaly Impact (range: -25.0 to +12.5)**: Triggered by the LSTM Autoencoder's reconstruction error (MSE) relative to the threshold:
+    * *Bullish Anomaly*: A dynamic volatility boost of up to $+12.5$ points if price is above VWAP, net trade is positive, or sentiment is bullish.
+    * *Bearish Anomaly*: A dynamic penalty of up to $-25.0$ points if indicators point downward.
+* **Ollama structured output**: The calculated score and 12-candle sequence are passed to **Ollama** running `qwen2.5:7b`. It enforces strict, schema-locked token outputs mapped directly to the `CryptoSenseBrief` structure:
   ```python
   class CryptoSenseBrief(BaseModel):
-      market_health_score: int          # Range: [0, 100]
       primary_metric_driver: Literal["volume_spike", "liquidity_flight", "sentiment_shift", "on_chain_whale_flow", "none"]
-      market_trajectory_summary: str    # Strict factual 3-sentence quantitative summary
+      market_trajectory_summary: str    # Strict factual 3-sentence quantitative summary explaining the health score
       trustworthiness_classification: Literal["HIGH_CONVICTION", "LOW_TRUST_SPECULATIVE", "LIQUIDITY_EXHAUSTION", "STABLE_BASELINE"]
   ```
 

@@ -52,11 +52,15 @@ async def simulate_anomaly():
             "close_price": 58000.00,  # Sudden drop
             "volume_5m": 9500.0,      # MASSIVE volume spike
             "vwap": 59000.00,
-            "spread": 15.5,           # Wide spread (liquidity drained)
-            "imbalance": -0.85        # Huge seller dominance
+            "net_trade": -4000.0
+        },
+        "orderbook": {
+            "avg_spread": 15.5,           # Wide spread (liquidity drained)
+            "avg_imbalance": -0.85        # Huge seller dominance
         },
         "sentiment": {
-            "avg_score": -0.92,       # Extreme panic sentiment
+            "retail_avg_score": -0.92,       # Extreme panic sentiment
+            "institutional_avg_score": -0.85, # Extreme institutional panic sentiment
             "tweet_count": 4500,
             "positive_count": 100,
             "negative_count": 4000,
@@ -70,6 +74,7 @@ async def simulate_anomaly():
     fake_macro_alert = {
         "is_anomaly": True,
         "mse_score": 0.045,           # Way above 0.008 threshold
+        "threshold": 0.008,
         "severity": "CRITICAL"
     }
 
@@ -84,8 +89,8 @@ async def simulate_anomaly():
 
     print("📊 ADIM 1: Veri Paketi (Payload) Oluşturuldu.")
     print("Enjekte Edilen Kriz Verileri:")
-    print(f" - Emir Defteri İhtilafı (Imbalance): {fake_payload['market_data']['imbalance']}")
-    print(f" - Duygu Puanı (Sentiment): {fake_payload['sentiment']['avg_score']}")
+    print(f" - Emir Defteri İhtilafı (Imbalance): {fake_payload['orderbook']['avg_imbalance']}")
+    print(f" - Duygu Puanı (Sentiment): {fake_payload['sentiment']['retail_avg_score']}")
     print(f" - Borsalara Giren Para (On-Chain): ${fake_payload['on_chain']['net_cex_flow_usd']:,.2f}")
     print(f" - PyTorch Anomali Kararı: {fake_macro_alert['is_anomaly']} (MSE: {fake_macro_alert['mse_score']})\n")
 

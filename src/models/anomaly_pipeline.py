@@ -252,6 +252,7 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
                     "AI_ENGINE": {
                         "reconstruction_error": round(mse, 6),
                         "is_statistical_anomaly": is_anomaly,
+                        "optimal_threshold": round(threshold, 6),
                         "severity": "CRITICAL" if mse > (threshold * 2) else "HIGH" if is_anomaly else "NORMAL"
                     }
                 }

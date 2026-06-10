@@ -102,12 +102,16 @@ async def fetch_and_process_rss(client: httpx.AsyncClient) -> None:
     bucket_ts = time.time() - (time.time() % 300)
     bucket_dt = datetime.fromtimestamp(bucket_ts, tz=timezone.utc)
     
-    for text_payload in new_articles:
+    try:
+        # Score with FinBERT in a single batch
+        batch_scores = score_texts_batched(new_articles)
+    except Exception as e:
+        LOGGER.error("FinBERT batch scoring failed: %s", e)
+        batch_scores = [{"positive": 0.0, "negative": 0.0, "neutral": 1.0} for _ in new_articles]
+
+    for text_payload, scores in zip(new_articles, batch_scores):
         try:
-            # Score with FinBERT using batched scorer (returns a list of 1)
-            scores = score_texts_batched([text_payload])[0]
             score = compound_score(scores)
-            
             symbols = _get_symbols_from_text(text_payload)
             
             for symbol in symbols:
@@ -126,7 +130,7 @@ async def fetch_and_process_rss(client: httpx.AsyncClient) -> None:
                     text_payload[:500] # sample headline with source and description
                 ))
         except Exception as e:
-            LOGGER.error("FinBERT scoring failed for news title: %s", e)
+            LOGGER.error("FinBERT scoring or processing failed for news article: %s", e)
 
     # Insert into DB (Aggregating simple rows)
     if rows:
