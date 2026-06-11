@@ -16,6 +16,13 @@ from src.models.model_registry import ModelRegistry
 
 LOGGER = logging.getLogger("anomaly_pipeline")
 
+SQL_COLUMNS = [
+    "bucket", "open", "high", "low", "close", "volume", "trade_count", "net_trade", "vwap",
+    "avg_spread", "avg_mid_price", "avg_bid_depth", "avg_ask_depth", "avg_imbalance",
+    "avg_score", "tweet_count", "positive_count", "negative_count", "net_flow_usd",
+    "news_avg_score"
+]
+
 TRACKED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "AVAXUSDT"]
 
 SEQ_LEN = 12
@@ -52,7 +59,8 @@ SELECT
     s.tweet_count, 
     s.positive_count, 
     s.negative_count,
-    COALESCE(c.net_flow_usd, 0.0) AS net_flow_usd
+    COALESCE(c.net_flow_usd, 0.0) AS net_flow_usd,
+    COALESCE(ns.avg_score, 0.0) AS news_avg_score
 FROM finalized_buckets fb
 JOIN trade_candles_5m t ON t.bucket = fb.bucket AND t.symbol = fb.symbol
 JOIN orderbook_snapshots_5m o ON o.bucket = fb.bucket AND o.symbol = fb.symbol
@@ -62,12 +70,13 @@ LEFT JOIN (
     FROM cex_flows_5m 
     GROUP BY bucket, symbol
 ) c ON c.bucket = fb.bucket AND c.symbol = TRIM(REPLACE(fb.symbol, 'USDT', ''))
+LEFT JOIN news_sentiment_5m ns ON ns.bucket = fb.bucket AND ns.symbol = REPLACE(fb.symbol, 'USDT', '')
 WHERE fb.symbol = %s
 ORDER BY final_bucket DESC
 LIMIT %s;
 """
 
-async def fetch_and_scale_latest_window(target_symbol: str, base_symbol: str, scaler_params: dict) -> tuple[torch.Tensor | None, dict | None]:
+async def fetch_and_scale_latest_window(target_symbol: str, scaler_params: dict) -> tuple[torch.Tensor | None, dict | None]:
     rows = await execute_query_fetch_async(SQL_FETCH_LATEST, (target_symbol, SEQ_LEN))
 
     if not rows or len(rows) < SEQ_LEN:
@@ -75,13 +84,7 @@ async def fetch_and_scale_latest_window(target_symbol: str, base_symbol: str, sc
         return None, None
 
     rows = rows[::-1]
-    sql_columns = [
-        "bucket", "open", "high", "low", "close", "volume", "trade_count",
-        "net_trade", "vwap", "avg_spread", "avg_mid_price", "avg_bid_depth",
-        "avg_ask_depth", "avg_imbalance", "avg_score", "tweet_count",
-        "positive_count", "negative_count", "net_flow_usd"
-    ]
-    df = pd.DataFrame(rows, columns=sql_columns)
+    df = pd.DataFrame(rows, columns=SQL_COLUMNS)
     df["bucket"] = pd.to_datetime(df["bucket"], utc=True)
 
     # Safely reorder columns to match scaler JSON feature mapping exactly
@@ -134,14 +137,14 @@ def _legacy_artifacts(symbol: str) -> tuple[Path, Path]:
     )
 
 
-def _resolve_artifact_paths(symbol: str) -> tuple[Path, Path]:
+def resolve_artifact_paths(symbol: str) -> tuple[Path, Path]:
     versioned = _latest_versioned_artifacts(symbol)
     if versioned is not None:
         return versioned
     return _legacy_artifacts(symbol)
 
 
-def _resolve_model_device() -> torch.device:
+def resolve_model_device() -> torch.device:
     configured = settings.RETRAIN_DEVICE
     if configured == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -151,7 +154,7 @@ def _resolve_model_device() -> torch.device:
 
 
 def load_model_into_registry(symbol: str, device: torch.device) -> bool:
-    model_path, scaler_path = _resolve_artifact_paths(symbol)
+    model_path, scaler_path = resolve_artifact_paths(symbol)
 
     if not model_path.exists() or not scaler_path.exists():
         LOGGER.error(f"Missing weights for {symbol}. Skipping this coin.")
@@ -179,7 +182,7 @@ def run_model_inference(model: LSTMAutoencoder, input_tensor: torch.Tensor) -> f
 
 async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
     LOGGER.info("Starting Multi-Coin AI Anomaly Detection Engine...")
-    device = _resolve_model_device()
+    device = resolve_model_device()
 
     loaded_symbols = []
     for symbol in TRACKED_SYMBOLS:
@@ -201,7 +204,7 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
                     continue
 
                 input_tensor, latest_data = await fetch_and_scale_latest_window(
-                    target_symbol, base_symbol, scaler_params
+                    target_symbol, scaler_params
                 )
 
                 if input_tensor is None or latest_data is None:
@@ -213,12 +216,13 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
                 # Offload PyTorch inference computation to a worker thread
                 mse = await asyncio.to_thread(run_model_inference, model, input_tensor)
 
-                is_anomaly = mse > ANOMALY_THRESHOLD
+                threshold = scaler_params.get("optimal_threshold", ANOMALY_THRESHOLD)
+                is_anomaly = mse > threshold
 
                 if is_anomaly:
-                    LOGGER.warning(f"🚨 {target_symbol} ANOMALY! MSE: {mse:.6f} 🚨")
+                    LOGGER.warning(f"🚨 {target_symbol} ANOMALY! MSE: {mse:.6f} | threshold: {threshold:.6f} 🚨")
                 else:
-                    LOGGER.info(f"{target_symbol} heartbeat normal. MSE: {mse:.6f}")
+                    LOGGER.info(f"{target_symbol} heartbeat normal. MSE: {mse:.6f} | threshold: {threshold:.6f}")
 
                 llm_payload = {
                     "timestamp": latest_data["bucket"].isoformat(),
@@ -236,7 +240,8 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
                         "ask_depth": round(latest_data["avg_ask_depth"], 2)
                     },
                     "sentiment": {
-                        "avg_score": round(latest_data["avg_score"], 3),
+                        "retail_avg_score": round(latest_data["avg_score"], 3),
+                        "institutional_avg_score": round(latest_data.get("news_avg_score", 0.0), 3),
                         "tweet_count": int(latest_data["tweet_count"]),
                         "positive_count": int(latest_data["positive_count"]),
                         "negative_count": int(latest_data["negative_count"])
@@ -247,7 +252,8 @@ async def start_anomaly_stream(stop_event: asyncio.Event) -> None:
                     "AI_ENGINE": {
                         "reconstruction_error": round(mse, 6),
                         "is_statistical_anomaly": is_anomaly,
-                        "severity": "CRITICAL" if mse > (ANOMALY_THRESHOLD * 2) else "HIGH" if is_anomaly else "NORMAL"
+                        "optimal_threshold": round(threshold, 6),
+                        "severity": "CRITICAL" if mse > (threshold * 2) else "HIGH" if is_anomaly else "NORMAL"
                     }
                 }
 

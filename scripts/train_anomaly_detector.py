@@ -8,7 +8,8 @@ from __future__ import annotations
 import logging
 import sys
 
-from src.models.retraining_service import TARGET_SYMBOL, train_symbol_model
+from src.core.config import settings
+from src.models.retraining_service import train_symbol_model
 
 PURPLE = "\033[95m"
 RESET = "\033[0m"
@@ -31,7 +32,9 @@ logger.addHandler(handler)
 
 
 def main() -> None:
-    train_symbol_model(TARGET_SYMBOL)
+    for symbol in settings.RETRAIN_SYMBOLS:
+        logger.info("Starting manual retraining for %s...", symbol)
+        train_symbol_model(symbol)
 
 
 if __name__ == "__main__":

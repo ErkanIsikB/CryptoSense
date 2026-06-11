@@ -26,6 +26,7 @@ from src.core.config import settings
 from src.db.db import execute_query_fetch
 from src.models.lstm_autoencoder import LSTMAutoencoder
 from src.models.model_registry import ModelRegistry
+from src.models.anomaly_pipeline import resolve_model_device, SQL_COLUMNS
 
 LOGGER = logging.getLogger("model_training")
 
@@ -39,6 +40,8 @@ LEARNING_RATE: Final[float] = 0.001
 LATENT_DIM: Final[int] = 10
 
 MODEL_DIR: Final[Path] = settings.PROJECT_ROOT / "src" / "models" / "saved_weights"
+
+
 
 # --- Structured SQL Query Formulation ---
 SQL_DATA_EXTRACT: Final[str] = """
@@ -68,7 +71,8 @@ SELECT
     s.tweet_count, 
     s.positive_count, 
     s.negative_count,
-    COALESCE(c.net_flow_usd, 0.0) AS net_flow_usd
+    COALESCE(c.net_flow_usd, 0.0) AS net_flow_usd,
+    COALESCE(ns.avg_score, 0.0) AS news_avg_score
 FROM finalized_buckets fb
 JOIN trade_candles_5m t ON t.bucket = fb.bucket AND t.symbol = fb.symbol
 JOIN orderbook_snapshots_5m o ON o.bucket = fb.bucket AND o.symbol = fb.symbol
@@ -78,6 +82,7 @@ LEFT JOIN (
     FROM cex_flows_5m 
     GROUP BY bucket, symbol
 ) c ON c.bucket = fb.bucket AND c.symbol = TRIM(REPLACE(fb.symbol, 'USDT', ''))
+LEFT JOIN news_sentiment_5m ns ON ns.bucket = fb.bucket AND ns.symbol = REPLACE(fb.symbol, 'USDT', '')
 WHERE fb.symbol = %s
   AND fb.bucket >= NOW() - %s::interval
 ORDER BY final_bucket ASC;
@@ -101,13 +106,160 @@ def _artifact_dir(output_root: Path, target_symbol: str, artifact_date: date | N
     return output_root / target_symbol.upper() / version_date.isoformat()
 
 
-def _resolve_training_device() -> torch.device:
-    configured = settings.RETRAIN_DEVICE
-    if configured == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if configured.startswith("cuda") and not torch.cuda.is_available():
-        raise RuntimeError(f"RETRAIN_DEVICE={configured!r} requested but CUDA is unavailable.")
-    return torch.device(configured)
+def generate_proxy_labels(df: pd.DataFrame, z_threshold: float = 3.0) -> np.ndarray:
+    """Generate statistical proxy labels (0 or 1) using Z-score outliers on key channels."""
+    # Compute 5m return
+    close = df["close"].to_numpy()
+    returns = np.zeros_like(close)
+    returns[1:] = np.log(close[1:] / close[:-1])
+    
+    volume = df["volume"].to_numpy()
+    imbalance = df["avg_imbalance"].to_numpy()
+    net_flow = df["net_flow_usd"].to_numpy()
+    
+    def compute_z_scores(arr: np.ndarray) -> np.ndarray:
+        mean = np.mean(arr)
+        std = np.std(arr)
+        std = std if std != 0 else 1.0
+        return np.abs((arr - mean) / std)
+    
+    z_returns = compute_z_scores(returns)
+    z_volume = compute_z_scores(volume)  # Fixed bug: use volume instead of z_returns
+    z_imbalance = compute_z_scores(imbalance)
+    z_flow = compute_z_scores(net_flow)
+    
+    proxy_labels = ((z_returns > z_threshold) | 
+                    (z_volume > z_threshold) | 
+                    (z_imbalance > z_threshold) | 
+                    (z_flow > z_threshold)).astype(int)
+    return proxy_labels
+
+
+def slice_continuous_windows(
+    timestamps: list[Any],
+    feature_matrix: np.ndarray,
+    seq_len: int = SEQUENCE_LENGTH,
+) -> np.ndarray:
+    """Slice feature matrix into continuous sequence windows based on BUCKET_DELTA_MINUTES."""
+    sequences: list[np.ndarray] = []
+    current_block: list[np.ndarray] = []
+    last_timestamp = None
+
+    for i, current_ts in enumerate(timestamps):
+        if last_timestamp is None:
+            current_block.append(feature_matrix[i])
+        else:
+            time_delta = current_ts - last_timestamp
+            if time_delta <= timedelta(minutes=BUCKET_DELTA_MINUTES):
+                current_block.append(feature_matrix[i])
+            else:
+                if len(current_block) >= seq_len:
+                    for start in range(len(current_block) - seq_len + 1):
+                        sequences.append(np.array(current_block[start: start + seq_len]))
+                current_block = [feature_matrix[i]]
+        last_timestamp = current_ts
+
+    if len(current_block) >= seq_len:
+        for start in range(len(current_block) - seq_len + 1):
+            sequences.append(np.array(current_block[start: start + seq_len]))
+
+    return np.array(sequences, dtype=np.float32)
+
+
+def align_labels_to_sequences(
+    df: pd.DataFrame,
+    proxy_labels: np.ndarray,
+    seq_len: int = SEQUENCE_LENGTH,
+) -> np.ndarray:
+    """Align individual row labels to sequence windows by mapping sequence label to the last row."""
+    labels = []
+    current_block_labels = []
+    last_timestamp = None
+    timestamps = df["bucket"].tolist()
+
+    for i, current_ts in enumerate(timestamps):
+        lbl = proxy_labels[i]
+        if last_timestamp is None:
+            current_block_labels.append(lbl)
+        else:
+            time_delta = current_ts - last_timestamp
+            if time_delta <= timedelta(minutes=BUCKET_DELTA_MINUTES):
+                current_block_labels.append(lbl)
+            else:
+                if len(current_block_labels) >= seq_len:
+                    for start in range(len(current_block_labels) - seq_len + 1):
+                        labels.append(current_block_labels[start + seq_len - 1])
+                current_block_labels = [lbl]
+        last_timestamp = current_ts
+
+    if len(current_block_labels) >= seq_len:
+        for start in range(len(current_block_labels) - seq_len + 1):
+            labels.append(current_block_labels[start + seq_len - 1])
+
+    return np.array(labels, dtype=np.int32)
+
+
+def compute_roc_curve(y_true: np.ndarray, y_scores: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute Receiver Operating Characteristic (ROC) curve metrics natively."""
+    desc_score_indices = np.argsort(y_scores)[::-1]
+    y_scores = y_scores[desc_score_indices]
+    y_true = y_true[desc_score_indices]
+    
+    tps = np.cumsum(y_true)
+    fps = np.cumsum(1 - y_true)
+    
+    thresholds = y_scores
+    tpr = tps / tps[-1] if tps[-1] > 0 else np.zeros_like(tps)
+    fpr = fps / fps[-1] if fps[-1] > 0 else np.zeros_like(fps)
+    
+    # Prepend 0 to fpr, tpr and append a dummy threshold to match scikit-learn standard
+    tpr = np.r_[0.0, tpr]
+    fpr = np.r_[0.0, fpr]
+    thresholds = np.r_[thresholds[0] + 1e-5, thresholds]
+    
+    return fpr, tpr, thresholds
+
+
+def compute_auc(fpr: np.ndarray, tpr: np.ndarray) -> float:
+    """Calculate Area Under the Curve (AUC) using the trapezoidal rule."""
+    return float(np.sum((tpr[1:] + tpr[:-1]) * 0.5 * (fpr[1:] - fpr[:-1])))
+
+
+def run_evaluation_inference(
+    model: nn.Module,
+    x_eval: np.ndarray,
+    device: torch.device,
+) -> np.ndarray:
+    """Run model inference on evaluation sequences to get reconstructed MSE scores."""
+    model.eval()
+    mse_scores = []
+    X_tensor = torch.tensor(x_eval).to(device)
+    
+    with torch.no_grad():
+        batch_size = 64
+        for start_idx in range(0, len(X_tensor), batch_size):
+            batch_x = X_tensor[start_idx : start_idx + batch_size]
+            reconstructed = model(batch_x)
+            batch_mse = torch.mean((batch_x - reconstructed) ** 2, dim=(1, 2)).cpu().numpy()
+            mse_scores.extend(batch_mse)
+            
+    return np.array(mse_scores, dtype=np.float32)
+
+
+def calculate_optimal_threshold(
+    y_true: np.ndarray,
+    y_scores: np.ndarray,
+) -> tuple[float, float, np.ndarray, np.ndarray, np.ndarray, int]:
+    """Calculate the optimal threshold using Youden's J statistic, returning threshold, AUC, fpr, tpr, thresholds, and best_idx."""
+    fpr, tpr, thresholds = compute_roc_curve(y_true, y_scores)
+    auc_score = compute_auc(fpr, tpr)
+    
+    # Youden's J statistic
+    j_scores = tpr - fpr
+    best_idx = int(np.argmax(j_scores))
+    optimal_threshold = float(thresholds[best_idx])
+    
+    return optimal_threshold, auc_score, fpr, tpr, thresholds, best_idx
 
 
 def _write_artifacts_atomically(
@@ -152,13 +304,7 @@ def fetch_and_clean_dataframe(
     if not raw_rows:
         raise ValueError(f"Zero clean training samples found for {target_symbol} in the last {lookback_days} days.")
 
-    columns = [
-        "bucket", "open", "high", "low", "close", "volume", "trade_count", "net_trade", "vwap",
-        "avg_spread", "avg_mid_price", "avg_bid_depth", "avg_ask_depth", "avg_imbalance",
-        "avg_score", "tweet_count", "positive_count", "negative_count", "net_flow_usd"
-    ]
-
-    df = pd.DataFrame(raw_rows, columns=columns)
+    df = pd.DataFrame(raw_rows, columns=SQL_COLUMNS)
     df["bucket"] = pd.to_datetime(df["bucket"], utc=True)
     df = df.sort_values("bucket").reset_index(drop=True)
     LOGGER.info("Extracted %d valid running buckets from DB.", len(df))
@@ -188,39 +334,57 @@ def extract_continuous_sequences(df: pd.DataFrame) -> tuple[np.ndarray, dict[str
         "maxs": max_vals.to_dict()
     }
 
-    sequences: list[np.ndarray] = []
-    current_block: list[np.ndarray] = []
-    last_timestamp: datetime | None = None
-
     feature_matrix = df_scaled[feature_columns].to_numpy()
     timestamps = df_scaled["bucket"].tolist()
 
-    # Continuous Running Evaluation Engine
-    for i, current_ts in enumerate(timestamps):
-        if last_timestamp is None:
-            current_block.append(feature_matrix[i])
-        else:
-            time_delta = current_ts - last_timestamp
-            # If step gap matches exact interval, chain remains continuous
-            if time_delta <= timedelta(minutes=BUCKET_DELTA_MINUTES):
-                current_block.append(feature_matrix[i])
-            else:
-                # Downtime detected. Slice completed blocks into 1-hour windows
-                if len(current_block) >= SEQUENCE_LENGTH:
-                    for start in range(len(current_block) - SEQUENCE_LENGTH + 1):
-                        sequences.append(np.array(current_block[start: start + SEQUENCE_LENGTH]))
-                current_block = [feature_matrix[i]]
-
-        last_timestamp = current_ts
-
-    # Flush trailing active block
-    if len(current_block) >= SEQUENCE_LENGTH:
-        for start in range(len(current_block) - SEQUENCE_LENGTH + 1):
-            sequences.append(np.array(current_block[start: start + SEQUENCE_LENGTH]))
-
-    final_sequences = np.array(sequences, dtype=np.float32)
+    final_sequences = slice_continuous_windows(timestamps, feature_matrix, SEQUENCE_LENGTH)
     LOGGER.info("Extracted %d clean sliding sequence windows of length %d.", len(final_sequences), SEQUENCE_LENGTH)
     return final_sequences, scaler_params
+
+
+def _calibrate_and_update_scaler_params(
+    model: LSTMAutoencoder,
+    x_train_np: np.ndarray,
+    df: pd.DataFrame,
+    scaler_params: dict[str, Any],
+    device: torch.device,
+) -> None:
+    """Run ROC threshold calibration on trained model and append results to scaler_params."""
+    try:
+        LOGGER.info("Starting ROC threshold calibration on trained model...")
+        
+        # 1. Generate statistical proxy labels using Z-scores
+        proxy_labels = generate_proxy_labels(df, z_threshold=2.5)
+                        
+        # 2. Extract labels aligned to sequences
+        y_eval = align_labels_to_sequences(df, proxy_labels, SEQUENCE_LENGTH)
+        
+        # Alignment check
+        if len(x_train_np) != len(y_eval):
+            LOGGER.warning("Mismatch in sequences and labels during calibration. Truncating to match.")
+            min_len = min(len(x_train_np), len(y_eval))
+            x_train_np = x_train_np[:min_len]
+            y_eval = y_eval[:min_len]
+            
+        if len(x_train_np) == 0:
+            LOGGER.warning("No sequences available for ROC calibration.")
+            scaler_params["optimal_threshold"] = 0.008
+            scaler_params["auc_score"] = 0.5
+            return
+
+        # 3. Inference & ROC Threshold Calibration
+        y_scores = run_evaluation_inference(model, x_train_np, device)
+        optimal_threshold, auc_score, _, _, _, _ = calculate_optimal_threshold(y_eval, y_scores)
+        
+        LOGGER.info(f"ROC calibration completed. Calculated AUC: {auc_score:.5f}, Dynamic Threshold: {optimal_threshold:.6f}")
+        scaler_params["optimal_threshold"] = optimal_threshold
+        scaler_params["auc_score"] = auc_score
+        
+    except Exception as e:
+        LOGGER.exception(f"Failed to run ROC threshold calibration: {e}")
+        # Default safe fallbacks
+        scaler_params["optimal_threshold"] = 0.008
+        scaler_params["auc_score"] = 0.5
 
 
 def train_symbol_model(
@@ -245,7 +409,7 @@ def train_symbol_model(
         return None
 
     # 2. PyTorch Setup & Dataset Construction
-    device = _resolve_training_device()
+    device = resolve_model_device()
     LOGGER.info("Executing training loop on: %s", device)
 
     X_tensor = torch.tensor(X_train_np)
@@ -280,6 +444,8 @@ def train_symbol_model(
             LOGGER.info("Epoch [%d/%d] | Reconstruction Loss: %.6f", epoch, EPOCHS, avg_loss)
 
     # 4. Save Final Serialized Weights
+    _calibrate_and_update_scaler_params(model, X_train_np, df, scaler_params, device)
+
     try:
         _write_artifacts_atomically(
             output_root=output_root,

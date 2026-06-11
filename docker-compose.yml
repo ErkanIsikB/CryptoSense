@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # ── 1. Ingestion Pipeline, LSTM Anomaly, and LLM briefing Stream ──
+  ingestion-pipeline:
+    build: .
+    image: cryptosense-unified:latest
+    container_name: cryptosense-pipeline
+    command: python main.py
+    restart: always
+    env_file:
+      - .env
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── 2. FastAPI REST Web Backend API ───────────────────────────────
+  web-api:
+    build: .
+    image: cryptosense-unified:latest
+    container_name: cryptosense-api
+    command: uvicorn src.web.api:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    restart: always
+    env_file:
+      - .env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── 3. Streamlit Interactive Dashboard UI ────────────────────────
+  dashboard:
+    build: .
+    image: cryptosense-unified:latest
+    container_name: cryptosense-dashboard
+    command: streamlit run src/web/dashboard.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    restart: always
+    env_file:
+      - .env
+    depends_on:
+      - web-api
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

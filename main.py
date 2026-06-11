@@ -22,9 +22,11 @@ from src.core.utils.signals import setup_signals
 from src.data_sources.binancewebsocket.ws_trades_ingestion import start_trade_stream
 from src.data_sources.binancewebsocket.ws_orderbook_ingestion import start_orderbook_stream
 from src.data_sources.xquik.xquik_ingestion import start_xquik_sentiment_stream
+from src.data_sources.news_rss_ingestion import start_news_rss_stream
 from src.data_sources.bitquery.cex_flow_ingestion import start_cex_flow_stream
 
 from src.models.anomaly_pipeline import start_anomaly_stream
+from src.models.llm_pipeline import start_llm_decision_stream
 
 from src.sinks.timescale_sink import TimescaleSink
 from src.db.db import run_migration, close_pool
@@ -88,6 +90,13 @@ async def _run_all() -> None:
     else:
         LOGGER.warning("XQUIK_API not set — tweet sentiment pipeline disabled")
 
+    # 3.5 Institutional News RSS Sentiment (Phase 3)
+    news_task = asyncio.create_task(
+        start_news_rss_stream(stop),
+        name="news_rss_sentiment",
+    )
+    tasks.append(news_task)
+
     # 4. CEX Flows — Bitquery HTTP polling every 5 minutes
     if settings.BITQUERY_API_KEY:
         cex_task = asyncio.create_task(
@@ -107,6 +116,16 @@ async def _run_all() -> None:
         tasks.append(anomaly_task)
     else:
         LOGGER.warning("DB_URL not set — anomaly engine disabled")
+
+    # 6. LLM Decision Engine — Runs clock-aligned market briefings from DB (NEW)
+    if settings.DB_URL:
+        llm_task = asyncio.create_task(
+            start_llm_decision_stream(stop),
+            name="llm_decision_engine",
+        )
+        tasks.append(llm_task)
+    else:
+        LOGGER.warning("DB_URL not set — LLM decision engine disabled")
 
     try:
         if settings.RETRAIN_ENABLED and settings.DB_URL:

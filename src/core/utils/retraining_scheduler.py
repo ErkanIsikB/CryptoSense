@@ -50,11 +50,12 @@ def start_retraining_scheduler() -> Any:
     if AsyncIOScheduler is None:
         raise RuntimeError("APScheduler is required for scheduled retraining. Install apscheduler.")
 
-    if _scheduler is not None and _scheduler.running:
-        return _scheduler
+    sched = _scheduler
+    if sched is not None and sched.running:
+        return sched
 
-    _scheduler = AsyncIOScheduler(timezone=settings.RETRAIN_TIMEZONE)
-    _scheduler.add_job(
+    sched = AsyncIOScheduler(timezone=settings.RETRAIN_TIMEZONE)
+    sched.add_job(
         retrain_job,
         trigger="interval",
         days=settings.RETRAIN_INTERVAL_DAYS,
@@ -64,22 +65,24 @@ def start_retraining_scheduler() -> Any:
         coalesce=True,
         max_instances=1,
     )
-    _scheduler.start()
+    sched.start()
+    _scheduler = sched
     LOGGER.info(
         "Retraining scheduler started: every %d day(s), symbols=%s",
         settings.RETRAIN_INTERVAL_DAYS,
         ",".join(settings.RETRAIN_SYMBOLS),
     )
-    return _scheduler
+    return sched
 
 
 def shutdown_retraining_scheduler() -> None:
     global _scheduler
 
-    if _scheduler is None:
+    sched = _scheduler
+    if sched is None:
         return
 
-    if _scheduler.running:
-        _scheduler.shutdown(wait=False)
+    if sched.running:
+        sched.shutdown(wait=False)
         LOGGER.info("Retraining scheduler stopped")
     _scheduler = None
