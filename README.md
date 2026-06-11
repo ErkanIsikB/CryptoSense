@@ -125,6 +125,22 @@ CryptoSense implements a dual-method data extraction pipeline to optimize both r
 - **X (Twitter) Monitoring**: Real-time keyword monitoring via the [XQuik](https://xquik.com) platform, checking keyword filters every 1 second server-side.
 - **Institutional News Ingestion (RSS)**: Background polling of Tier-1 crypto news feeds (CoinDesk, CoinTelegraph, CryptoPanic, CryptoSlate, NewsBTC) every 5 minutes.
 - **Sentiment Inference**: Twitter and news events are processed and run locally through a pipeline-integrated `ProsusAI/FinBERT` Hugging Face model to score sentiment on a `[-1.0, +1.0]` (negative to positive) compound scale. News scoring is optimized using batch inference to maximize GPU/CPU hardware utilization.
+- **Source-Weighted Aggregation**: Each scored tweet is resolved against `src/core/config/twitter_source_tiers.json`. Known institutional, protocol, founder, and economy-news accounts receive moderate source weights, while unknown accounts remain included with weight `1.0`. The database preserves the raw `avg_score` and stores `weighted_avg_score` separately for comparison and debugging.
+
+#### Source Credibility Weighting
+CryptoSense weights sentiment sources because a verified institutional news post should influence the 5-minute aggregate more than a random hype post, without erasing broader market/community sentiment. The resolver in `src/feature_engineering/source_credibility.py` normalizes handles case-insensitively and accepts values with or without `@`.
+
+Default weights are intentionally moderate: `tier1=3.0`, `economy_news_sources=2.75`, `tier2=2.0`, `turkish_economy_sources=1.75`, `tier3=1.25`, and `unknown=1.0`. Unknown or missing handles are never filtered out. They are assigned `source_tier="unknown"` and remain part of both raw and weighted calculations.
+
+The weighted score is calculated as:
+
+```text
+weighted_avg_score = sum(raw_sentiment_score * source_weight) / sum(source_weight)
+```
+
+Update source tiers by editing `src/core/config/twitter_source_tiers.json`; no sentiment model changes are required. Run `python3 scripts/validate_weighted_sentiment.py` to verify the sample calculation from the capstone prompt.
+
+For a concise implementation write-up, see `docs/weighted_sentiment_implementation_report.md`.
 
 ### 3. On-Chain Exchange & Whale Flow (Bitquery GraphQL v2)
 Bitquery integration is heavily optimized using both HTTP polling and subscription mechanisms:
@@ -177,6 +193,11 @@ TimescaleDB manages temporal data alignment seamlessly. All core tables are init
 | `neutral_count` | INTEGER | Tweets scoring between `-0.1` and `+0.1` |
 | `max_score` / `min_score` | DOUBLE PRECISION | Extremes of FinBERT scores observed in bucket |
 | `sample_tweet` | TEXT | Text of the tweet with highest community engagement |
+| `weighted_avg_score` | DOUBLE PRECISION | Source-credibility weighted average sentiment |
+| `total_source_weight` | DOUBLE PRECISION | Sum of source weights used in the weighted average |
+| `tier1_count` / `tier2_count` / `tier3_count` | INTEGER | Count of scored tweets matched to crypto source tiers |
+| `economy_news_count` / `turkish_economy_count` | INTEGER | Count of scored tweets matched to economy/news source tiers |
+| `unknown_count` | INTEGER | Count of included tweets with missing or non-listed source handles |
 
 ### 3.5. `news_sentiment_5m` — RSS News Sentiment Metrics
 | Column | Type | Description |
@@ -276,6 +297,7 @@ CryptoSense/
 │   ├── run_migration.py              # Standalone migration script
 │   ├── simulate_anomaly.py           # Anomaly and LLM pipeline simulator (Phase 3)
 │   ├── train_anomaly_detector.py     # Unsupervised model training on TimescaleDB data
+│   ├── validate_weighted_sentiment.py # Small weighted sentiment validation example
 │   └── verify_db.py                  # Standalone verification script for TimescaleDB tables
 ├── tests/                            # Automated Testing Suite
 │   ├── test_integration.py           # Transaction-isolated (ROLLBACK) database integration test
@@ -290,7 +312,8 @@ CryptoSense/
     ├── __init__.py
     ├── core/
     │   ├── config/
-    │   │   └── settings.py           # Central settings parser
+    │   │   ├── settings.py           # Central settings parser
+    │   │   └── twitter_source_tiers.json # Source credibility tiers for weighted sentiment
     │   └── utils/
     │       ├── logging.py            # Color-coded logging configuration
     │       ├── retraining_scheduler.py # APScheduler retraining lifecycle orchestrator

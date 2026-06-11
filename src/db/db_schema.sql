@@ -74,8 +74,26 @@ CREATE TABLE IF NOT EXISTS tweet_sentiment_5m (
     max_score       DOUBLE PRECISION,
     min_score       DOUBLE PRECISION,
     sample_tweet    TEXT,
+    weighted_avg_score      DOUBLE PRECISION DEFAULT 0,
+    total_source_weight     DOUBLE PRECISION DEFAULT 0,
+    tier1_count             INTEGER DEFAULT 0,
+    tier2_count             INTEGER DEFAULT 0,
+    tier3_count             INTEGER DEFAULT 0,
+    economy_news_count      INTEGER DEFAULT 0,
+    turkish_economy_count   INTEGER DEFAULT 0,
+    unknown_count           INTEGER DEFAULT 0,
     UNIQUE (bucket, symbol)
 );
+
+ALTER TABLE tweet_sentiment_5m
+    ADD COLUMN IF NOT EXISTS weighted_avg_score DOUBLE PRECISION DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS total_source_weight DOUBLE PRECISION DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS tier1_count INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS tier2_count INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS tier3_count INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS economy_news_count INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS turkish_economy_count INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS unknown_count INTEGER DEFAULT 0;
 
 SELECT create_hypertable(
     'tweet_sentiment_5m', 'bucket',

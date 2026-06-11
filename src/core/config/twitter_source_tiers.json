@@ -1,0 +1,114 @@
+{
+  "tiers": {
+    "tier1": {
+      "description": "Highest credibility: institutional crypto news, official protocols, founders, and sector leaders.",
+      "default_weight": 3.0,
+      "accounts": [
+        {"handle": "@CoinDesk", "focus": "General Crypto News", "reason": "Highly respected independent news source"},
+        {"handle": "@TheBlock__", "focus": "Research & Data", "reason": "High-quality on-chain and market research"},
+        {"handle": "@Cointelegraph", "focus": "Fast Crypto News", "reason": "Broad coverage and fast reporting"},
+        {"handle": "@dlnews", "focus": "Institutional Crypto News", "reason": "Deep financial crypto coverage"},
+        {"handle": "@Decrypt", "focus": "Web3 & Crypto News", "reason": "Balanced and high-quality coverage"},
+        {"handle": "@saylor", "focus": "BTC", "reason": "MicroStrategy, Bitcoin treasury"},
+        {"handle": "@BitcoinMagazine", "focus": "BTC", "reason": "Bitcoin-focused publication"},
+        {"handle": "@DocumentingBTC", "focus": "BTC History & Events"},
+        {"handle": "@lopp", "focus": "BTC Technical", "reason": "Jameson Lopp, security expert"},
+        {"handle": "@VitalikButerin", "focus": "ETH", "reason": "Ethereum founder"},
+        {"handle": "@ethereum", "focus": "ETH Official"},
+        {"handle": "@TimBeiko", "focus": "ETH Core Dev"},
+        {"handle": "@solana", "focus": "SOL Official"},
+        {"handle": "@SolanaFndn", "focus": "SOL Foundation"},
+        {"handle": "@aeyakovenko", "focus": "SOL Founder"},
+        {"handle": "@BNBCHAIN", "focus": "BNB Official"},
+        {"handle": "@binance", "focus": "BNB Ecosystem"},
+        {"handle": "@cz_binance", "focus": "BNB Leader"},
+        {"handle": "@avax", "focus": "AVAX Official"},
+        {"handle": "@AvalancheFDN", "focus": "AVAX Foundation"},
+        {"handle": "@el33th4xor", "focus": "AVAX Founder"}
+      ]
+    },
+    "tier2": {
+      "description": "Strong analysis and news sources.",
+      "default_weight": 2.0,
+      "accounts": [
+        {"handle": "@APompliano", "focus": "General/BTC", "reason": "Macro and Bitcoin commentary"},
+        {"handle": "@Blockworks_", "focus": "News & Podcast"},
+        {"handle": "@TheDefiantIO", "focus": "DeFi & News"},
+        {"handle": "@WatcherGuru", "focus": "Fast News", "reason": "Use carefully; sometimes hype-oriented"},
+        {"handle": "@aantonop", "focus": "BTC Education"},
+        {"handle": "@MartyBent", "focus": "BTC"},
+        {"handle": "@nic__carter", "focus": "General Research"},
+        {"handle": "@intocryptoverse", "focus": "Technical & On-Chain", "reason": "Benjamin Cowen"},
+        {"handle": "@whale_alert", "focus": "On-Chain"},
+        {"handle": "@arkham", "focus": "On-Chain Intelligence"},
+        {"handle": "@MessariCrypto", "focus": "Research"},
+        {"handle": "@solana_daily", "focus": "SOL Summary"}
+      ]
+    },
+    "tier3": {
+      "description": "Supporting sources with higher hype risk. These sources are still useful, but they should only slightly affect the final score.",
+      "default_weight": 1.25,
+      "accounts": [
+        {"handle": "@AltcoinDaily", "focus": "Popular Crypto News"},
+        {"handle": "@100trillionUSD", "focus": "BTC Model / PlanB"},
+        {"handle": "@coinbureau", "focus": "Education & Analysis"},
+        {"handle": "@CryptoCobain", "focus": "Trader"},
+        {"handle": "@zackxbt", "focus": "Scam Research"}
+      ]
+    },
+    "economy_news_sources": {
+      "description": "National and international economy/finance news sources. Generally more neutral and institutional.",
+      "default_weight": 2.75,
+      "accounts": [
+        {"handle": "@CNBC", "focus": "US Economy & Crypto"},
+        {"handle": "@Bloomberg", "focus": "Global Finance & Crypto"},
+        {"handle": "@WSJ", "focus": "Wall Street Journal"},
+        {"handle": "@FT", "focus": "Financial Times"},
+        {"handle": "@Reuters", "focus": "Reuters - neutral news"},
+        {"handle": "@nytimesbusiness", "focus": "NYT Business"},
+        {"handle": "@Benzinga", "focus": "Fast Finance News"},
+        {"handle": "@WSJMarkets", "focus": "Market News"}
+      ]
+    },
+    "turkish_economy_sources": {
+      "description": "Turkish economy and finance sources.",
+      "default_weight": 1.75,
+      "accounts": [
+        {"handle": "@BloombergHT", "focus": "Turkey Economy & Crypto"},
+        {"handle": "@CNBCTurkiye", "focus": "Turkey Crypto & Finance"},
+        {"handle": "@ekonomistdergi", "focus": "Economy Magazine"},
+        {"handle": "@NTV", "focus": "NTV Economy"}
+      ]
+    }
+  },
+  "default_unknown_source": {
+    "description": "Default treatment for ordinary users, unknown accounts, or accounts outside the predefined source lists. These tweets must still be included in the sentiment calculation.",
+    "default_weight": 1.0,
+    "source_tier": "unknown"
+  },
+  "weighting_policy": {
+    "description": "Moderate source weighting policy. Trusted sources influence the final sentiment more than ordinary accounts, but no source category should completely dominate the result.",
+    "unknown_sources_enabled": true,
+    "max_single_source_weight": 3.0,
+    "recommended_weights": {
+      "tier1": 3.0,
+      "economy_news_sources": 2.75,
+      "tier2": 2.0,
+      "turkish_economy_sources": 1.75,
+      "tier3": 1.25,
+      "unknown": 1.0
+    }
+  },
+  "token_keywords": [
+    "$BTC",
+    "$ETH",
+    "$SOL",
+    "$BNB",
+    "$AVAX",
+    "Bitcoin",
+    "Ethereum",
+    "Solana",
+    "BNB Chain",
+    "Avalanche"
+  ]
+}

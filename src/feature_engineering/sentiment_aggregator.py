@@ -16,6 +16,7 @@ from typing import Any
 
 from src.core.config import settings
 from src.db.db import execute_batch
+from src.feature_engineering.source_credibility import empty_tier_counts, tier_count_field
 
 LOGGER = logging.getLogger("sentiment_aggregator")
 
@@ -29,6 +30,8 @@ class SentimentAccumulator:
     bucket_ts: float
     symbol: str
     score_sum: float = 0.0
+    weighted_score_sum: float = 0.0
+    total_source_weight: float = 0.0
     count: int = 0
     positive_count: int = 0
     negative_count: int = 0
@@ -37,10 +40,25 @@ class SentimentAccumulator:
     min_score: float = math.inf
     sample_tweet: str = ""
     _best_engagement: float = field(default=-1.0, repr=False)
+    tier_counts: dict[str, int] = field(default_factory=empty_tier_counts)
 
-    def add(self, score: float, tweet_text: str = "", engagement: float = 0.0) -> None:
+    def add(
+        self,
+        score: float,
+        tweet_text: str = "",
+        engagement: float = 0.0,
+        source_weight: float = 1.0,
+        source_tier: str = "unknown",
+    ) -> None:
+        try:
+            source_weight = max(float(source_weight or 1.0), 0.0)
+        except (TypeError, ValueError):
+            source_weight = 1.0
         self.score_sum += score
+        self.weighted_score_sum += score * source_weight
+        self.total_source_weight += source_weight
         self.count += 1
+        self.tier_counts[tier_count_field(source_tier)] += 1
 
         if score > 0.1:
             self.positive_count += 1
@@ -59,7 +77,23 @@ class SentimentAccumulator:
 
     def to_row(self) -> tuple[Any, ...]:
         avg = self.score_sum / self.count if self.count > 0 else 0.0
+        weighted_avg = (
+            self.weighted_score_sum / self.total_source_weight
+            if self.total_source_weight > 0
+            else 0.0
+        )
         bucket_dt = datetime.fromtimestamp(self.bucket_ts, tz=timezone.utc)
+        LOGGER.debug(
+            "sentiment bucket ready: symbol=%s bucket=%s avg=%.4f weighted_avg=%.4f "
+            "count=%d total_weight=%.2f tiers=%s",
+            self.symbol,
+            bucket_dt.isoformat(),
+            avg,
+            weighted_avg,
+            self.count,
+            self.total_source_weight,
+            self.tier_counts,
+        )
         return (
             bucket_dt,
             self.symbol,
@@ -71,14 +105,24 @@ class SentimentAccumulator:
             round(self.max_score, 6) if self.max_score != -math.inf else None,
             round(self.min_score, 6) if self.min_score != math.inf else None,
             self.sample_tweet[:500] if self.sample_tweet else None,
+            round(weighted_avg, 6),
+            round(self.total_source_weight, 6),
+            self.tier_counts["tier1_count"],
+            self.tier_counts["tier2_count"],
+            self.tier_counts["tier3_count"],
+            self.tier_counts["economy_news_count"],
+            self.tier_counts["turkish_economy_count"],
+            self.tier_counts["unknown_count"],
         )
 
 
 INSERT_SQL = """
 INSERT INTO tweet_sentiment_5m
     (bucket, symbol, avg_score, tweet_count, positive_count,
-     negative_count, neutral_count, max_score, min_score, sample_tweet)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+     negative_count, neutral_count, max_score, min_score, sample_tweet,
+     weighted_avg_score, total_source_weight, tier1_count, tier2_count,
+     tier3_count, economy_news_count, turkish_economy_count, unknown_count)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (bucket, symbol) DO UPDATE SET
     avg_score      = EXCLUDED.avg_score,
     tweet_count    = EXCLUDED.tweet_count,
@@ -87,7 +131,15 @@ ON CONFLICT (bucket, symbol) DO UPDATE SET
     neutral_count  = EXCLUDED.neutral_count,
     max_score      = EXCLUDED.max_score,
     min_score      = EXCLUDED.min_score,
-    sample_tweet   = EXCLUDED.sample_tweet;
+    sample_tweet   = EXCLUDED.sample_tweet,
+    weighted_avg_score       = EXCLUDED.weighted_avg_score,
+    total_source_weight      = EXCLUDED.total_source_weight,
+    tier1_count              = EXCLUDED.tier1_count,
+    tier2_count              = EXCLUDED.tier2_count,
+    tier3_count              = EXCLUDED.tier3_count,
+    economy_news_count       = EXCLUDED.economy_news_count,
+    turkish_economy_count    = EXCLUDED.turkish_economy_count,
+    unknown_count            = EXCLUDED.unknown_count;
 """
 
 
@@ -111,6 +163,8 @@ class SentimentAggregator:
         tweet_time_s: float,
         tweet_text: str = "",
         engagement: float = 0.0,
+        source_weight: float = 1.0,
+        source_tier: str = "unknown",
     ) -> None:
         bucket_ts = _bucket_start(tweet_time_s)
         key = (symbol, bucket_ts)
@@ -120,7 +174,7 @@ class SentimentAggregator:
             if acc is None:
                 acc = SentimentAccumulator(bucket_ts=bucket_ts, symbol=symbol)
                 self._buckets[key] = acc
-            acc.add(score, tweet_text, engagement)
+            acc.add(score, tweet_text, engagement, source_weight, source_tier)
 
         self._maybe_flush(tweet_time_s)
 
@@ -144,7 +198,15 @@ class SentimentAggregator:
                             0,
                             None,
                             None,
-                            None
+                            None,
+                            0.0,
+                            0.0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
                         ))
             self._buckets.clear()
         self._write(rows, synchronous=True)
@@ -179,7 +241,15 @@ class SentimentAggregator:
                             0,    # neutral_count
                             None, # max_score
                             None, # min_score
-                            None  # sample_tweet
+                            None, # sample_tweet
+                            0.0,  # weighted_avg_score
+                            0.0,  # total_source_weight
+                            0,    # tier1_count
+                            0,    # tier2_count
+                            0,    # tier3_count
+                            0,    # economy_news_count
+                            0,    # turkish_economy_count
+                            0,    # unknown_count
                         ))
                 t += WINDOW_S
             

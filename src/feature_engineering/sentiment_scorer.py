@@ -17,6 +17,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 from src.db.db import execute_query
+from src.feature_engineering.source_credibility import (
+    calculate_weighted_sentiment,
+    enrich_scored_item,
+    extract_author_handle,
+)
 from datasets import Dataset
 from transformers.pipelines.pt_utils import KeyDataset
 
@@ -98,8 +103,10 @@ def compound_score(probs: dict[str, float]) -> float:
 INSERT_SQL = """
 INSERT INTO tweet_sentiment_5m
     (bucket, symbol, avg_score, tweet_count, positive_count,
-     negative_count, neutral_count, max_score, min_score, sample_tweet)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+     negative_count, neutral_count, max_score, min_score, sample_tweet,
+     weighted_avg_score, total_source_weight, tier1_count, tier2_count,
+     tier3_count, economy_news_count, turkish_economy_count, unknown_count)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (bucket, symbol) DO UPDATE SET
     avg_score      = EXCLUDED.avg_score,
     tweet_count    = EXCLUDED.tweet_count,
@@ -108,7 +115,15 @@ ON CONFLICT (bucket, symbol) DO UPDATE SET
     neutral_count  = EXCLUDED.neutral_count,
     max_score      = EXCLUDED.max_score,
     min_score      = EXCLUDED.min_score,
-    sample_tweet   = EXCLUDED.sample_tweet;
+    sample_tweet   = EXCLUDED.sample_tweet,
+    weighted_avg_score       = EXCLUDED.weighted_avg_score,
+    total_source_weight      = EXCLUDED.total_source_weight,
+    tier1_count              = EXCLUDED.tier1_count,
+    tier2_count              = EXCLUDED.tier2_count,
+    tier3_count              = EXCLUDED.tier3_count,
+    economy_news_count       = EXCLUDED.economy_news_count,
+    turkish_economy_count    = EXCLUDED.turkish_economy_count,
+    unknown_count            = EXCLUDED.unknown_count;
 """
 
 
@@ -158,10 +173,13 @@ def score_and_store(record: dict[str, Any]) -> None:
     compound_sum = 0.0
     sample_tweet = ""
     top_relevance = -1.0
+    enriched_items: list[dict[str, Any]] = []
 
     for item, probs in zip(valid_items, batch_scores):
         compound = compound_score(probs)
         compound_sum += compound
+        enrich_scored_item(item, compound, extract_author_handle(item))
+        enriched_items.append(item)
 
         if compound > 0.1:
             positive_count += 1
@@ -181,6 +199,8 @@ def score_and_store(record: dict[str, Any]) -> None:
 
     n = len(valid_items)
     avg_compound = compound_sum / n if n > 0 else 0.0
+    weighted_stats = calculate_weighted_sentiment(enriched_items)
+    weighted_avg = weighted_stats["weighted_avg_sentiment"]
 
     row = (
         ts,
@@ -193,19 +213,38 @@ def score_and_store(record: dict[str, Any]) -> None:
         round(max_score, 6) if max_score != -999.0 else None,
         round(min_score, 6) if min_score != 999.0 else None,
         sample_tweet[:500] if sample_tweet else None,
+        round(weighted_avg, 6),
+        round(float(weighted_stats["total_source_weight"]), 6),
+        int(weighted_stats["tier1_count"]),
+        int(weighted_stats["tier2_count"]),
+        int(weighted_stats["tier3_count"]),
+        int(weighted_stats["economy_news_count"]),
+        int(weighted_stats["turkish_economy_count"]),
+        int(weighted_stats["unknown_count"]),
     )
 
     # noinspection PyBroadException
     try:
         execute_query(INSERT_SQL, row)
         LOGGER.info(
-            "sentiment scored and saved: symbol=%s avg_score=%.4f articles=%d pos=%d neg=%d neu=%d",
+            "sentiment scored and saved: symbol=%s avg_score=%.4f weighted_avg=%.4f "
+            "articles=%d total_weight=%.2f pos=%d neg=%d neu=%d tiers=%s",
             symbol,
             avg_compound,
+            weighted_avg,
             n,
+            weighted_stats["total_source_weight"],
             positive_count,
             negative_count,
             neutral_count,
+            {
+                "tier1": weighted_stats["tier1_count"],
+                "tier2": weighted_stats["tier2_count"],
+                "tier3": weighted_stats["tier3_count"],
+                "economy_news": weighted_stats["economy_news_count"],
+                "turkish_economy": weighted_stats["turkish_economy_count"],
+                "unknown": weighted_stats["unknown_count"],
+            },
         )
     except Exception:
         LOGGER.exception("failed to write sentiment score for %s", symbol)
