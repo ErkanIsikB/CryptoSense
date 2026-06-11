@@ -27,6 +27,12 @@ import httpx
 from src.core.config import settings
 from src.feature_engineering.sentiment_scorer import score_texts_batched, compound_score
 from src.feature_engineering.sentiment_aggregator import SentimentAggregator
+from src.feature_engineering.source_credibility import (
+    enrich_scored_item,
+    extract_author_handle,
+    resolve_source_credibility,
+    tier_count_field,
+)
 
 LOGGER = logging.getLogger("xquik_ingestion")
 
@@ -343,12 +349,24 @@ async def _poll_and_score_cycle(
         batch_scores = await asyncio.to_thread(score_texts_batched, texts_to_score)
 
         scored = 0
+        tier_counts = {
+            "tier1_count": 0,
+            "tier2_count": 0,
+            "tier3_count": 0,
+            "economy_news_count": 0,
+            "turkish_economy_count": 0,
+            "unknown_count": 0,
+        }
         for event, probs in zip(valid_events, batch_scores):
             data = event.get("data", {})
             text = data.get("text", "")
 
             tweet_time_s = _parse_event_time(event)
             score = compound_score(probs)
+            author_handle = extract_author_handle(data, event)
+            credibility = resolve_source_credibility(author_handle)
+            enrich_scored_item(data, score, author_handle)
+            tier_counts[tier_count_field(credibility.source_tier)] += 1
 
             engagement = float(data.get("likeCount", 0) or 0) + float(data.get("retweetCount", 0) or 0)
 
@@ -358,12 +376,18 @@ async def _poll_and_score_cycle(
                 tweet_time_s=tweet_time_s,
                 tweet_text=text[:500],
                 engagement=engagement,
+                source_weight=credibility.source_weight,
+                source_tier=credibility.source_tier,
             )
             scored += 1
 
         if scored > 0:
             LOGGER.info(
-                "scored %d tweet(s) for %s from %d events", scored, symbol, len(events)
+                "scored %d tweet(s) for %s from %d events source_tiers=%s",
+                scored,
+                symbol,
+                len(events),
+                tier_counts,
             )
         total_scored += scored
 
