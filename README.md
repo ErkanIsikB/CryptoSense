@@ -26,7 +26,8 @@ graph TD
         OA[OrderbookAggregator <br/> 5-min Average Depth & Spread]
         SA[SentimentAggregator <br/> 5-min Tweet Sentiment]
         NA[News Ingestion Scorer <br/> 5-min RSS News Sentiment]
-        FS[FinBERT Model <br/> scoring compound scores]
+        CB[CryptoBERT Model <br/> Tweet Sentiment Scoring]
+        FB[FinBERT Model <br/> News Sentiment Scoring]
     end
 
     %% Database Layer
@@ -62,8 +63,8 @@ graph TD
     %% Flows
     BWS --> TA
     BWS --> OA
-    XQ --> FS --> SA
-    RSS --> FS --> NA
+    XQ --> CB --> SA
+    RSS --> FB --> NA
     B_CEX --> T_CF
     B_WS --> Storage
     B_HTTP --> Storage
@@ -101,7 +102,7 @@ graph TD
 ```
 
 ### Dynamic Ingestion & Machine Learning Loops
-1. **Pipeline Execution & Thread Offloading**: Live trades (Binance), orderbook snapshot averages, sentiment models (XQuik/FinBERT), and exchange transfers are continuously aggregated into 5-minute buckets and committed directly to TimescaleDB. Heavy computations—like FinBERT text scoring, PyTorch forward-passes, and database batch flushes—are offloaded to background threads (`asyncio.to_thread` / `threading.Thread`), keeping the event loop 100% fluid.
+1. **Pipeline Execution & Thread Offloading**: Live trades (Binance), orderbook snapshot averages, sentiment models (XQuik/CryptoBERT for tweets, FinBERT for news), and exchange transfers are continuously aggregated into 5-minute buckets and committed directly to TimescaleDB. Heavy computations—like CryptoBERT/FinBERT text scoring, PyTorch forward-passes, and database batch flushes—are offloaded to background threads (`asyncio.to_thread` / `threading.Thread`), keeping the event loop 100% fluid.
 2. **Dynamic DB CTE Barrier Sync & CEX Flow LEFT JOIN**: To eliminate timing drift and prevent "ghost" data entries from corrupting model normalization, the Anomaly Engine queries using a strict 3-table `INTERSECT` CTE barrier across high-frequency feeds (`trade_candles_5m`, `orderbook_snapshots_5m`, and `tweet_sentiment_5m`). The lower-frequency on-chain CEX flows (`cex_flows_5m`) are joined optionally via a `LEFT JOIN` and wrapped in `COALESCE` to default missing metrics to `0.0`.
 3. **Thread-Safe Pooling & Teardown Security**: Database operations are protected by thread-safe PgPool async query wrappers guarded by an `asyncio.Semaphore(10)` matched to database pool limits. Teardown lifecycles implement a top-down closing hierarchy with a 1.0s settling grace period and synchronous shutdown flushes to prevent psycopg2 pool errors.
 4. **Deduplicated Schemas & Shared ML Calculus**: The codebase enforces a single source of truth for SQL projections using a public `SQL_COLUMNS` constant in `anomaly_pipeline.py`. Model evaluation calculations and Youden statistics are centralized into `run_evaluation_inference` and `calculate_optimal_threshold` within `retraining_service.py` to prevent logic duplication.
@@ -121,10 +122,15 @@ CryptoSense implements a dual-method data extraction pipeline to optimize both r
   - *Tracked Pairs*: `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `BNBUSDT`, `AVAXUSDT`.
 - **Orderbook Depth**: REST polling of active order book snapshots (top 20 bid/ask levels) every ~2.0 seconds to track depth and compute imbalance indexes.
 
-### 2. Social & News Sentiment (XQuik, RSS & FinBERT)
+### 2. Social & News Sentiment (XQuik, RSS & Dual-Model Scoring)
 - **X (Twitter) Monitoring**: Real-time keyword monitoring via the [XQuik](https://xquik.com) platform, checking keyword filters every 1 second server-side.
 - **Institutional News Ingestion (RSS)**: Background polling of Tier-1 crypto news feeds (CoinDesk, CoinTelegraph, CryptoPanic, CryptoSlate, NewsBTC) every 5 minutes.
-- **Sentiment Inference**: Twitter and news events are processed and run locally through a pipeline-integrated `ProsusAI/FinBERT` Hugging Face model to score sentiment on a `[-1.0, +1.0]` (negative to positive) compound scale. News scoring is optimized using batch inference to maximize GPU/CPU hardware utilization.
+- **Dual-Model Sentiment Inference**: CryptoSense uses a dual-model architecture for optimal accuracy across different text domains:
+  - **CryptoBERT** (`ElKulako/cryptobert`) — pre-trained on 3.2M crypto tweets, fine-tuned on ~2M StockTwits posts. Used for scoring informal, slang-heavy social-media text (XQuik tweets). Labels: *Bullish*, *Bearish*, *Neutral* (normalised to *positive*, *negative*, *neutral*).
+  - **FinBERT** (`ProsusAI/finbert`) — trained on Reuters financial news. Used for scoring formal, well-structured text such as RSS news headlines and earnings reports. Labels: *positive*, *negative*, *neutral*.
+  - Both models are loaded lazily on first use and produce a compound score in `[-1.0, +1.0]` via `score = p(positive) − p(negative)`. Batch inference is used to maximize GPU/CPU utilization.
+- **English Language Filter**: Before scoring, tweets are passed through a `langdetect`-based English filter (`is_english()`). The filter first strips language-neutral noise (URLs, mentions, hashtags, cashtags) to improve detection accuracy on short/noisy social-media text. Non-English tweets are dropped to prevent garbage model predictions.
+- **Off-Topic Tweet Filter**: Keyword monitors inevitably match generic "crypto news" tweets that append a wall of coin tags (e.g. `#BTC #ETH #SOL #DOGE #crypto`) to content unrelated to the tracked symbol. The `_is_offtopic_news_tweet()` filter strips tags/links/mentions from the text and checks whether the remaining prose genuinely mentions the tracked coin. Multi-coin tag blasts and pure tag-and-link spam are discarded.
 - **Source-Weighted Aggregation**: Each scored tweet is resolved against `src/core/config/twitter_source_tiers.json`. Known institutional, protocol, founder, and economy-news accounts receive moderate source weights, while unknown accounts remain included with weight `1.0`. The database preserves the raw `avg_score` and stores `weighted_avg_score` separately for comparison and debugging.
 
 #### Source Credibility Weighting
@@ -186,12 +192,12 @@ TimescaleDB manages temporal data alignment seamlessly. All core tables are init
 | :--- | :--- | :--- |
 | `bucket` 🔑 | TIMESTAMPTZ | 5-minute bucket start timestamp |
 | `symbol` 🔑 | TEXT | Unified token symbol (e.g. `BTC`) |
-| `avg_score` | DOUBLE PRECISION | Average FinBERT score `[-1, +1]` |
+| `avg_score` | DOUBLE PRECISION | Average CryptoBERT score `[-1, +1]` |
 | `tweet_count` | INTEGER | Total scored tweets matching keywords |
 | `positive_count` | INTEGER | Tweets with compound score > `+0.1` |
 | `negative_count` | INTEGER | Tweets with compound score < `-0.1` |
 | `neutral_count` | INTEGER | Tweets scoring between `-0.1` and `+0.1` |
-| `max_score` / `min_score` | DOUBLE PRECISION | Extremes of FinBERT scores observed in bucket |
+| `max_score` / `min_score` | DOUBLE PRECISION | Extremes of CryptoBERT scores observed in bucket |
 | `sample_tweet` | TEXT | Text of the tweet with highest community engagement |
 | `weighted_avg_score` | DOUBLE PRECISION | Source-credibility weighted average sentiment |
 | `total_source_weight` | DOUBLE PRECISION | Sum of source weights used in the weighted average |
@@ -251,7 +257,7 @@ TimescaleDB manages temporal data alignment seamlessly. All core tables are init
 ## 🧠 AI Anomaly & LLM Decision Engines
 
 ### 1. PyTorch LSTM Autoencoder
-* **Architecture**: Sequence length of `12` (exactly 1 hour of history) and a features dimension of `18` (covering price, depth, spread, volume, on-chain flows, and FinBERT sentiment, excluding the bucket timestamp). Hidden dimension bottleneck is `10` (`LATENT_DIM = 10`).
+* **Architecture**: Sequence length of `12` (exactly 1 hour of history) and a features dimension of `18` (covering price, depth, spread, volume, on-chain flows, and CryptoBERT/FinBERT sentiment, excluding the bucket timestamp). Hidden dimension bottleneck is `10` (`LATENT_DIM = 10`).
 * **Unsupervised Anomaly Detection**: Minimizes reconstruction loss (MSE). A reconstruction error exceeding the dynamically calibrated Youden's J threshold (e.g., 0.003071 with a verified AUC of 0.77621 for AVAXUSDT, serialized in scaler_params_*.json) registers as a statistical anomaly.
 
 ### 2. Scheduled Retraining Daemon
@@ -303,7 +309,9 @@ CryptoSense/
 │   ├── test_integration.py           # Transaction-isolated (ROLLBACK) database integration test
 │   ├── test_lstm_autoencoder.py      # LSTM Autoencoder architecture and gradient check
 │   ├── test_data_processing.py       # Data sliding windows and label alignment check
-│   ├── test_sentiment_scorer.py      # FinBERT compound scorer and F1 score check (>0.75)
+│   ├── test_sentiment_scorer.py      # Dual-model (CryptoBERT + FinBERT) scorer and F1 check (>0.75)
+│   ├── test_xquick.py                # XQuik live API tweet collection with English & off-topic filters
+│   ├── test_xquik_filtering.py       # Off-topic tweet filter unit tests
 │   ├── test_timescale_sink.py        # TimescaleSink routing adapter checks
 │   ├── test_signals.py               # Unix/Windows graceful shutdown signal handler checks
 │   ├── test_retraining_scheduler.py  # APScheduler retraining lifecycle orchestrator checks
@@ -336,12 +344,13 @@ CryptoSense/
     ├── feature_engineering/          # Aggregation Engines
     │   ├── trade_aggregator.py       # Computes OHLCV, buy/sell ratios, VWAP
     │   ├── orderbook_aggregator.py   # Computes spread averages, depths, and imbalances
-    │   ├── finbert.py                # Shared FinBERT engine (lazy load, batched GPU scoring)
+    │   ├── source_credibility.py     # Source tier resolution & weighted sentiment calculation
     │   ├── xquik_aggregator.py       # Tweet sentiment distribution metrics (5-min buckets)
-    │   ├── xquik_scorer.py           # FinBERT scoring for XQuik/Tavily records
+    │   ├── xquik_scorer.py           # CryptoBERT scoring for XQuik tweet records
     │   ├── news_rss_aggregator.py    # News sentiment bucketing into news_sentiment_5m
     │   └── news_rss_scorer.py        # FinBERT scoring & symbol attribution for news
-    ├── models/                       # Deep Learning & Decision Engine
+    ├── models/                       # Deep Learning, Sentiment & Decision Engines
+    │   ├── sentiment_models.py       # Dual sentiment engine: CryptoBERT (tweets) + FinBERT (news)
     │   ├── lstm_autoencoder.py       # PyTorch LSTM Autoencoder architecture
     │   ├── anomaly_pipeline.py       # Real-time anomaly inference pipeline
     │   ├── llm_pipeline.py           # Local structured Ollama/Qwen briefings loop
@@ -518,9 +527,9 @@ To run all unit tests and the database integration tests:
 python scripts/run_all_tests.py
 ```
 This discovers and executes:
-- **Unit tests** covering model dimensions, data scaling/sliding windows, FinBERT classification (Macro F1 validation), database routing adapters, system signal handlers, and scheduler lifecycles.
+- **Unit tests** covering model dimensions, data scaling/sliding windows, dual-model sentiment classification (CryptoBERT + FinBERT Macro F1 validation ≥ 0.75), English language detection, off-topic tweet filtering, database routing adapters, system signal handlers, and scheduler lifecycles.
 - **Database integration tests** running inside a mock-patched, transaction-isolated wrapper (`ROLLBACK`) that tests aggregators and selects records without writing permanent data to your tables.
-- **XQuik functionality test** simulating tweet ingestion for a short duration.
+- **XQuik live API test** collecting real tweets over a 2-minute monitoring window with English language and off-topic filters, then scoring them with CryptoBERT.
 
 At completion, a detailed Markdown summary report is written directly to [test_report.md](file:///c:/Users/Monster/WEB%20APPS/CryptoSense/test_report.md) in the project root.
 
