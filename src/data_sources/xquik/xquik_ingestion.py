@@ -28,7 +28,7 @@ from typing import Any
 import httpx
 
 from src.core.config import settings
-from src.feature_engineering.finbert import score_texts_batched, compound_score
+from src.models.sentiment_models import score_tweets_batched, compound_score, is_english
 from src.feature_engineering.xquik_aggregator import SentimentAggregator
 from src.feature_engineering.source_credibility import (
     enrich_scored_item,
@@ -398,6 +398,8 @@ async def _poll_and_score_cycle(
         texts_to_score = []
         offtopic = 0
 
+        non_english = 0
+
         for event in events:
             data = event.get("data", {})
             text = data.get("text", "")
@@ -409,20 +411,24 @@ async def _poll_and_score_cycle(
             if _is_offtopic_news_tweet(symbol, text):
                 offtopic += 1
                 continue
+            if not is_english(text):
+                non_english += 1
+                continue
 
             valid_events.append(event)
             texts_to_score.append(text)
 
-        if offtopic:
+        if offtopic or non_english:
             LOGGER.info(
-                "filtered %d off-topic news/tag-spam tweet(s) for %s", offtopic, symbol
+                "filtered %d off-topic + %d non-English tweet(s) for %s",
+                offtopic, non_english, symbol,
             )
 
         if not valid_events:
             continue
 
         # Fire the GPU exactly ONE time for the whole batch (offloaded to thread)
-        batch_scores = await asyncio.to_thread(score_texts_batched, texts_to_score)
+        batch_scores = await asyncio.to_thread(score_tweets_batched, texts_to_score)
 
         scored = 0
         tier_counts = {

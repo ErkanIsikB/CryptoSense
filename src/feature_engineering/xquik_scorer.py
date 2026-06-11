@@ -1,9 +1,9 @@
-"""XQuik Scorer — runs FinBERT on XQuik search results and writes numeric
+"""XQuik Scorer — runs CryptoBERT on XQuik search results and writes numeric
 scores to TimescaleDB.
 
-Uses the shared :mod:`src.feature_engineering.finbert` engine for inference
-and applies XQuik/tweet-specific enrichment (source credibility, weighting)
-before persisting to ``tweet_sentiment_5m``.
+Uses the shared :mod:`src.models.sentiment_models` engine's CryptoBERT
+pipeline for inference and applies XQuik/tweet-specific enrichment (source
+credibility, weighting) before persisting to ``tweet_sentiment_5m``.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from src.db.db import execute_query
-from src.feature_engineering.finbert import compound_score, score_texts_batched
+from src.models.sentiment_models import compound_score, score_tweets_batched
 from src.feature_engineering.source_credibility import (
     calculate_weighted_sentiment,
     enrich_scored_item,
@@ -86,7 +86,7 @@ def score_and_store(record: dict[str, Any]) -> None:
         return
 
     # 2. Fire the GPU exactly ONE time for the whole batch
-    batch_scores = score_texts_batched(texts_to_score)
+    batch_scores = score_tweets_batched(texts_to_score)
 
     # 3. Calculate the math
     positive_count = 0

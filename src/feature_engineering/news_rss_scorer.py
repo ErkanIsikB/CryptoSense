@@ -1,7 +1,8 @@
 """News RSS Scorer — runs FinBERT on institutional news articles.
 
-Uses the shared :mod:`src.feature_engineering.finbert` engine for inference
-and attributes each article to the tracked symbols it mentions. Scored
+Uses the shared :mod:`src.models.sentiment_models` engine's FinBERT
+pipeline for inference (optimised for formal financial text) and
+attributes each article to the tracked symbols it mentions. Scored
 articles are handed to :mod:`src.feature_engineering.news_rss_aggregator`
 for bucketing and persistence.
 """
@@ -11,7 +12,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from src.feature_engineering.finbert import compound_score, score_texts_batched
+from src.models.sentiment_models import compound_score, score_news_batched
 
 LOGGER = logging.getLogger("news_rss_scorer")
 
@@ -55,7 +56,7 @@ def score_articles(texts: list[str]) -> list[ScoredArticle]:
 
     try:
         # Score with FinBERT in a single batch
-        batch_scores = score_texts_batched(texts)
+        batch_scores = score_news_batched(texts)
     except Exception as e:
         LOGGER.error("FinBERT batch scoring failed: %s", e)
         batch_scores = [{"positive": 0.0, "negative": 0.0, "neutral": 1.0} for _ in texts]

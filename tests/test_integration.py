@@ -17,6 +17,33 @@ from src.db.db import execute_query_fetch, close_pool, get_pool
 from src.feature_engineering.trade_aggregator import TradeAggregator
 from src.feature_engineering.orderbook_aggregator import OrderbookAggregator
 
+class _NoCommitConnectionWrapper:
+    """Proxy around a psycopg2 connection that suppresses commit().
+
+    psycopg2 connections are C-extension objects whose attributes (including
+    ``commit``) are read-only slots.  Neither direct assignment nor
+    ``unittest.mock.patch.object`` can override them.  This thin wrapper
+    delegates every attribute lookup to the real connection but defines its
+    own ``commit()`` which is a deliberate no-op, keeping the transaction
+    open so it can be rolled back at the end of the test.
+    """
+
+    def __init__(self, real_conn):
+        # Store via object.__setattr__ to avoid triggering our own __setattr__
+        object.__setattr__(self, "_real_conn", real_conn)
+
+    # ---- override commit to be a no-op ----
+    def commit(self):
+        pass  # intentionally suppressed for test isolation
+
+    # ---- delegate everything else to the real connection ----
+    def __getattr__(self, name):
+        return getattr(self._real_conn, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._real_conn, name, value)
+
+
 @contextmanager
 def transaction_isolated_context():
     """Context manager to run tests within a database transaction that is rolled back.
@@ -26,16 +53,13 @@ def transaction_isolated_context():
     pool = get_pool()
     conn = pool.getconn()
     conn.autocommit = False
-    
-    original_commit = conn.commit
-    original_rollback = conn.rollback
-    
-    # Prevent committing to the DB
-    conn.commit = lambda: None
+
+    # Wrap the connection so that commit() calls become no-ops
+    wrapped = _NoCommitConnectionWrapper(conn)
     
     @contextmanager
     def mock_get_connection():
-        yield conn
+        yield wrapped
 
     # SyncThread executes the thread target synchronously on the main thread
     original_thread = threading.Thread
@@ -64,15 +88,13 @@ def transaction_isolated_context():
                     "DELETE FROM orderbook_snapshots_5m WHERE symbol = 'ETHUSDT' AND bucket >= '2023-11-14 22:00:00+00' AND bucket <= '2023-11-14 22:30:00+00';"
                 )
             
-            yield conn
+            yield wrapped
         finally:
             try:
-                original_rollback()
+                conn.rollback()  # rollback on the REAL connection
             except Exception as rollback_err:
                 print(f"Error during rollback: {rollback_err}")
             
-            conn.commit = original_commit
-            conn.rollback = original_rollback
             pool.putconn(conn)
 
 

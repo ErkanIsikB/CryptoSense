@@ -4,6 +4,8 @@ import sys
 import time
 import httpx
 from src.core.config import settings
+from src.models.sentiment_models import is_english
+from src.data_sources.xquik.xquik_ingestion import _is_offtopic_news_tweet, KEYWORD_QUERIES
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,10 +38,13 @@ async def set_monitor_active(client: httpx.AsyncClient, monitor_id: str, active:
     resp.raise_for_status()
 
 async def test_live_tweets():
+    """Run a live XQuik monitoring window and return collected tweet texts."""
     LOGGER.info("⏳ Starting self-contained XQuik Live Tweet Test (no local module dependencies)...")
     api_key = settings.XQUIK_API
     if not api_key:
         raise ValueError("XQUIK_API key is not configured in settings (.env)")
+
+    collected_tweets = []  # collect all tweet texts for downstream use
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         # Step 1: List existing monitors
@@ -125,6 +130,26 @@ async def test_live_tweets():
                             for idx, evt in enumerate(new_events[:3]):  # show up to 3 samples
                                 tweet_text = evt.get("data", {}).get("text", "").replace("\n", " ")
                                 LOGGER.info(f"      - {tweet_text[:100]}...")
+
+                            # Find symbol for off-topic filtering
+                            symbol = None
+                            for sym, q in KEYWORD_QUERIES.items():
+                                if q == query:
+                                    symbol = sym
+                                    break
+
+                            # Collect English-only and on-topic tweet texts for sentiment analysis
+                            for evt in new_events:
+                                tweet_text = evt.get("data", {}).get("text", "").strip()
+                                if not tweet_text:
+                                    continue
+                                if not is_english(tweet_text):
+                                    continue
+                                if symbol and _is_offtopic_news_tweet(symbol, tweet_text):
+                                    LOGGER.info(f"      🚫 [Filtered Off-Topic] for {symbol}: {tweet_text[:80]}...")
+                                    continue
+                                collected_tweets.append(tweet_text)
+
                             # Update the baseline to the newest seen event
                             last_event_ids[m_id] = str(events[0].get("id", ""))
                         else:
@@ -145,6 +170,9 @@ async def test_live_tweets():
                     LOGGER.error(f"❌ Failed to pause monitor {m_id}: {e}")
                 await asyncio.sleep(0.12)
             LOGGER.info("✅ Finished cleaning up. Monitors have been paused.")
+
+    LOGGER.info(f"\n📊 Total tweets collected for sentiment analysis: {len(collected_tweets)}")
+    return collected_tweets
 
 if __name__ == "__main__":
     try:
