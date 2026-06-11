@@ -8,7 +8,7 @@ It implements ``BaseSink`` so it can be used as a drop-in replacement for
 The actual aggregation and DB writes are handled by:
 - ``TradeAggregator`` for trade events
 - ``OrderbookAggregator`` for orderbook snapshots
-- ``sentiment_scorer`` for sentiment records
+- ``xquik_scorer`` for sentiment records
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from typing import Any
 from src.sinks.base import BaseSink
 from src.feature_engineering.trade_aggregator import TradeAggregator
 from src.feature_engineering.orderbook_aggregator import OrderbookAggregator
-from src.feature_engineering.sentiment_scorer import score_and_store
+from src.feature_engineering.xquik_scorer import score_and_store
 
 LOGGER = logging.getLogger("timescale_sink")
 

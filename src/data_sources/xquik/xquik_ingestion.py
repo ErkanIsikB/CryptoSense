@@ -4,8 +4,10 @@ Flow:
 1. On startup, ensure keyword monitors exist for each tracked coin
 2. Fast-forward cursors to ignore old backlog
 3. Every 5 minutes, poll the events API for strictly new tweets
-4. Score each tweet through FinBERT (Batched for GPU efficiency)
-5. Feed scored tweets into SentimentAggregator (5-min buckets → TimescaleDB)
+4. Filter out retweets and hashtag-stuffed "crypto news" tweets that are
+   not actually about the tracked coin
+5. Score each tweet through FinBERT (Batched for GPU efficiency)
+6. Feed scored tweets into SentimentAggregator (5-min buckets → TimescaleDB)
 
 Uses the XQuik REST API:
 - POST /api/v1/monitors/keywords — create keyword monitor
@@ -18,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from datetime import datetime
 from typing import Any
@@ -25,8 +28,8 @@ from typing import Any
 import httpx
 
 from src.core.config import settings
-from src.feature_engineering.sentiment_scorer import score_texts_batched, compound_score
-from src.feature_engineering.sentiment_aggregator import SentimentAggregator
+from src.feature_engineering.finbert import score_texts_batched, compound_score
+from src.feature_engineering.xquik_aggregator import SentimentAggregator
 from src.feature_engineering.source_credibility import (
     enrich_scored_item,
     extract_author_handle,
@@ -46,6 +49,70 @@ KEYWORD_QUERIES: dict[str, str] = {
     "BNB": '$BNB OR "bnb" OR "binance coin"',
     "AVAX": '$AVAX OR #Avalanche OR "avalanche crypto"',
 }
+
+
+# ── Tweet relevance filtering ───────────────────────────────────
+#
+# Keyword monitors also match generic "crypto news" tweets that append a wall
+# of coin tags (… #BTC #ETH #SOL #DOGE #crypto) to content that is not about
+# the tracked coin at all. Those tweets pollute the per-symbol sentiment, so
+# a tweet is only kept if its prose (text minus tags/links/mentions) actually
+# mentions the coin, or if the coin is not just one tag in a multi-coin blast.
+
+_URL_RE = re.compile(r"https?://\S+")
+_MENTION_RE = re.compile(r"@\w+")
+_TAG_RE = re.compile(r"[#$][A-Za-z][A-Za-z0-9_]*")
+_WORD_RE = re.compile(r"[A-Za-z0-9']+")
+
+# Terms that prove the prose is genuinely about the coin
+_SYMBOL_TERMS: dict[str, re.Pattern[str]] = {
+    "BTC": re.compile(r"\b(btc|bitcoin)\b", re.IGNORECASE),
+    "ETH": re.compile(r"\b(eth|ethereum|ether)\b", re.IGNORECASE),
+    "SOL": re.compile(r"\b(sol|solana)\b", re.IGNORECASE),
+    "BNB": re.compile(r"\b(bnb|binance coin)\b", re.IGNORECASE),
+    "AVAX": re.compile(r"\b(avax|avalanche)\b", re.IGNORECASE),
+}
+
+# Hashtags that name a topic rather than a specific coin — these don't count
+# towards the multi-coin tag blast detection
+_GENERIC_TAGS = {
+    "crypto", "cryptocurrency", "cryptocurrencies", "cryptonews", "cryptotwitter",
+    "blockchain", "web3", "defi", "nft", "nfts", "altcoin", "altcoins",
+    "memecoin", "memecoins", "trading", "investing", "news", "breaking",
+    "bullish", "bearish", "bullrun", "hodl", "fintech", "markets", "airdrop",
+    "giveaway", "presale",
+}
+
+# A tweet whose prose never mentions the coin is dropped when it tags more
+# than this many distinct coins (the aggregator/news-bot signature) …
+MAX_OFFTOPIC_COIN_TAGS = 2
+# … or when almost nothing is left after stripping tags, links, and mentions.
+MIN_PROSE_WORDS = 3
+
+
+def _is_offtopic_news_tweet(symbol: str, text: str) -> bool:
+    """True when a tweet only touches ``symbol`` through hashtag/cashtag spam."""
+    symbol_terms = _SYMBOL_TERMS.get(symbol)
+    if symbol_terms is None:
+        return False
+
+    prose = _TAG_RE.sub(" ", _MENTION_RE.sub(" ", _URL_RE.sub(" ", text)))
+
+    # The tweet body genuinely talks about the coin → keep it
+    if symbol_terms.search(prose):
+        return False
+
+    # The coin appears only as a tag among several other coins → news blast
+    tags = {t[1:].lower() for t in _TAG_RE.findall(text)}
+    coin_tags = tags - _GENERIC_TAGS
+    if len(coin_tags) > MAX_OFFTOPIC_COIN_TAGS:
+        return True
+
+    # Nothing of substance left once tags/links/mentions are stripped
+    if len(_WORD_RE.findall(prose)) < MIN_PROSE_WORDS:
+        return True
+
+    return False
 
 
 def _headers() -> dict[str, str]:
@@ -329,6 +396,7 @@ async def _poll_and_score_cycle(
 
         valid_events = []
         texts_to_score = []
+        offtopic = 0
 
         for event in events:
             data = event.get("data", {})
@@ -338,9 +406,17 @@ async def _poll_and_score_cycle(
                 continue
             if data.get("isRetweet"):
                 continue
+            if _is_offtopic_news_tweet(symbol, text):
+                offtopic += 1
+                continue
 
             valid_events.append(event)
             texts_to_score.append(text)
+
+        if offtopic:
+            LOGGER.info(
+                "filtered %d off-topic news/tag-spam tweet(s) for %s", offtopic, symbol
+            )
 
         if not valid_events:
             continue

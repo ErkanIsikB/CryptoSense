@@ -1,4 +1,4 @@
-"""Sentiment Aggregator — buckets individual tweet scores into 5-minute windows.
+"""XQuik Aggregator — buckets individual tweet scores into 5-minute windows.
 
 Works identically to ``TradeAggregator``: incoming scored tweets are buffered
 by ``(symbol, 5-min bucket)``.  When a new tweet arrives in a later bucket,
@@ -18,7 +18,7 @@ from src.core.config import settings
 from src.db.db import execute_batch
 from src.feature_engineering.source_credibility import empty_tier_counts, tier_count_field
 
-LOGGER = logging.getLogger("sentiment_aggregator")
+LOGGER = logging.getLogger("xquik_aggregator")
 
 WINDOW_S: int = settings.AGGREGATION_WINDOW_SECONDS  # 300 = 5 min
 

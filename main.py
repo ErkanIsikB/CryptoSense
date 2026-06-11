@@ -22,7 +22,7 @@ from src.core.utils.signals import setup_signals
 from src.data_sources.binancewebsocket.ws_trades_ingestion import start_trade_stream
 from src.data_sources.binancewebsocket.ws_orderbook_ingestion import start_orderbook_stream
 from src.data_sources.xquik.xquik_ingestion import start_xquik_sentiment_stream
-from src.data_sources.news_rss_ingestion import start_news_rss_stream
+from src.data_sources.news_rss.news_rss_ingestion import start_news_rss_stream
 from src.data_sources.bitquery.cex_flow_ingestion import start_cex_flow_stream
 
 from src.models.anomaly_pipeline import start_anomaly_stream

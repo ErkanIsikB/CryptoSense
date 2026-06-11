@@ -330,13 +330,17 @@ CryptoSense/
     │   │   ├── ws_solana_transfers.py    # Solana transfers WebSocket subscription
     │   │   └── ws_whale_trades.py        # DEX whale trades WebSocket subscription
     │   ├── xquik/
-    │   │   └── xquik_ingestion.py        # Keyword polling & sentiment orchestration
-    │   └── news_rss_ingestion.py         # Institutional news RSS polling pipeline (Phase 3)
+    │   │   └── xquik_ingestion.py        # Keyword polling, relevance filtering & orchestration
+    │   └── news_rss/
+    │       └── news_rss_ingestion.py     # Institutional news RSS polling pipeline (Phase 3)
     ├── feature_engineering/          # Aggregation Engines
     │   ├── trade_aggregator.py       # Computes OHLCV, buy/sell ratios, VWAP
     │   ├── orderbook_aggregator.py   # Computes spread averages, depths, and imbalances
-    │   ├── sentiment_aggregator.py   # Computes sentiment distribution metrics
-    │   └── sentiment_scorer.py       # FinBERT sentiment scoring implementation
+    │   ├── finbert.py                # Shared FinBERT engine (lazy load, batched GPU scoring)
+    │   ├── xquik_aggregator.py       # Tweet sentiment distribution metrics (5-min buckets)
+    │   ├── xquik_scorer.py           # FinBERT scoring for XQuik/Tavily records
+    │   ├── news_rss_aggregator.py    # News sentiment bucketing into news_sentiment_5m
+    │   └── news_rss_scorer.py        # FinBERT scoring & symbol attribution for news
     ├── models/                       # Deep Learning & Decision Engine
     │   ├── lstm_autoencoder.py       # PyTorch LSTM Autoencoder architecture
     │   ├── anomaly_pipeline.py       # Real-time anomaly inference pipeline

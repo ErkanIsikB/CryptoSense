@@ -1,5 +1,5 @@
 import unittest
-from src.feature_engineering.sentiment_scorer import compound_score, score_texts_batched
+from src.feature_engineering.finbert import compound_score, score_texts_batched
 
 class TestSentimentScorer(unittest.TestCase):
     def test_compound_score(self):
