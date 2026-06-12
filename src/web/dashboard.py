@@ -80,36 +80,41 @@ ensure_chime_exists()
 AUDIO_BASE64 = get_base64_audio("src/web/chime.wav")
 
 
-# Custom Premium CSS Styling (Dynamic 3-color wavy gradient background, glassmorphism, glowing micro-animations)
+# Custom Premium CSS Styling (Aurora mesh background, refined frosted glassmorphism, accent rails)
 st.markdown(
     """
     <div class="liquid-bg-container">
+        <div class="aurora-mesh"></div>
         <div class="liquid-blob liquid-blob-1"></div>
         <div class="liquid-blob liquid-blob-2"></div>
         <div class="liquid-blob liquid-blob-3"></div>
+        <div class="grain-overlay"></div>
     </div>
     <style>
-        /* Import Outfit Google Font */
-        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');
-        
-        /* ── Dynamic Organic Liquid Background (Pitch Black cosmic base with vibrant slow color splashes) ── */
+        /* Import display + body type pairing */
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
+
+        /* ── Aurora Glass theme tokens ── */
         :root, .stApp {
             --background-color: transparent !important;
             --secondary-background-color: rgba(255, 255, 255, 0.02) !important;
+            --glass-stroke: rgba(255, 255, 255, 0.10);
+            --accent-cyan: #38e8ff;
+            --accent-violet: #a78bfa;
         }
 
-        /* ── Aggressive CSS Override to Reveal Liquid Background through Streamlit ── */
+        /* ── Aggressive CSS Override to Reveal Aurora Background through Streamlit ── */
         html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stApp"], [data-testid="stHeader"], .main, .stMain, [data-testid="stMainTemplate"], .block-container, [data-testid="stVerticalBlock"], .element-container, [data-testid="element-container"], div[class*="st-emotion-cache"] {
             background-color: transparent !important;
             background: transparent !important;
             font-family: 'Outfit', sans-serif;
-            color: #ecf0f1;
+            color: #e7ecf5;
         }
 
         html, body {
             margin: 0;
             padding: 0;
-            background-color: #020205 !important; /* Base fallback */
+            background-color: #05070f !important; /* Deep space-navy base fallback */
         }
 
         .liquid-bg-container {
@@ -120,60 +125,87 @@ st.markdown(
             height: 100vh;
             z-index: -1;
             overflow: hidden;
-            background-color: #020205 !important;
-            background: #020205 !important;
+            background: radial-gradient(ellipse at 20% 0%, #0b1226 0%, #070a16 45%, #05070f 100%) !important;
             pointer-events: none;
         }
-        
+
+        /* ── Slowly drifting conic aurora mesh for depth behind the glass ── */
+        .aurora-mesh {
+            position: absolute;
+            inset: -25%;
+            background:
+                radial-gradient(40% 40% at 30% 30%, rgba(56, 232, 255, 0.18), transparent 60%),
+                radial-gradient(45% 45% at 75% 25%, rgba(167, 139, 250, 0.18), transparent 60%),
+                radial-gradient(50% 50% at 60% 80%, rgba(244, 114, 182, 0.14), transparent 60%);
+            filter: blur(40px);
+            animation: mesh-drift 40s ease-in-out infinite alternate;
+            will-change: transform;
+        }
+
+        @keyframes mesh-drift {
+            0%   { transform: translate3d(-3%, -2%, 0) rotate(0deg) scale(1.05); }
+            100% { transform: translate3d(3%, 2%, 0) rotate(8deg) scale(1.12); }
+        }
+
+        /* ── Fine grain overlay to kill banding and add a tactile, premium finish ── */
+        .grain-overlay {
+            position: absolute;
+            inset: 0;
+            opacity: 0.04;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+            mix-blend-mode: overlay;
+            pointer-events: none;
+        }
+
         .liquid-blob {
             position: absolute;
             border-radius: 50%;
-            filter: blur(140px);
-            opacity: 0.42; /* Highly intense floating splashes to drive gorgeous glass refraction */
+            filter: blur(150px);
+            opacity: 0.38;
             mix-blend-mode: screen;
             pointer-events: none;
             will-change: transform;
         }
-        
+
         .liquid-blob-1 {
-            width: 550px;
-            height: 550px;
-            background: radial-gradient(circle, #6366f1 0%, #312e81 40%, rgba(49, 46, 129, 0) 70%); /* Saturated Neon Indigo Core */
+            width: 540px;
+            height: 540px;
+            background: radial-gradient(circle, #22d3ee 0%, #0e7490 42%, rgba(14, 116, 144, 0) 70%); /* Aurora Cyan */
             top: -15%;
-            left: 10%;
+            left: 8%;
             animation: float-blob-1 25s ease-in-out infinite alternate;
         }
-        
+
         .liquid-blob-2 {
-            width: 480px;
-            height: 480px;
-            background: radial-gradient(circle, #14b8a6 0%, #0f766e 40%, rgba(15, 118, 110, 0) 70%); /* Saturated Neon Teal Core */
-            bottom: -5%;
-            right: 15%;
+            width: 470px;
+            height: 470px;
+            background: radial-gradient(circle, #818cf8 0%, #4338ca 42%, rgba(67, 56, 202, 0) 70%); /* Aurora Indigo */
+            bottom: -8%;
+            right: 12%;
             animation: float-blob-2 28s ease-in-out infinite alternate;
         }
-        
+
         .liquid-blob-3 {
             width: 600px;
             height: 600px;
-            background: radial-gradient(circle, #d946ef 0%, #581c87 40%, rgba(88, 28, 135, 0) 70%); /* Saturated Neon Violet/Magenta Core */
-            top: 25%;
-            left: 35%;
+            background: radial-gradient(circle, #f472b6 0%, #9d174d 42%, rgba(157, 23, 77, 0) 70%); /* Aurora Rose */
+            top: 28%;
+            left: 38%;
             animation: float-blob-3 26s ease-in-out infinite alternate;
         }
-        
+
         @keyframes float-blob-1 {
             0% { transform: translate3d(-40px, -20px, 0) scale(0.95); }
             50% { transform: translate3d(60px, 40px, 0) scale(1.05); }
             100% { transform: translate3d(-40px, -20px, 0) scale(0.95); }
         }
-        
+
         @keyframes float-blob-2 {
             0% { transform: translate3d(60px, 30px, 0) scale(1.05); }
             50% { transform: translate3d(-50px, -45px, 0) scale(0.95); }
             100% { transform: translate3d(60px, 30px, 0) scale(1.05); }
         }
-        
+
         @keyframes float-blob-3 {
             0% { transform: translate3d(-30px, 40px, 0) scale(0.97); }
             50% { transform: translate3d(45px, -35px, 0) scale(1.03); }
@@ -181,72 +213,84 @@ st.markdown(
         }
 
         /* ── Prevent Streamlit's "stale" fade-out during reruns ── */
-        div.element-container, 
+        div.element-container,
         [data-testid="stVerticalBlock"],
         [data-testid="stAppViewContainer"] {
             opacity: 1 !important;
             transition: none !important;
         }
 
-        /* ── Premium iOS Dark-Tinted Liquid Glass Panel (Frosted Saturation, Gloss highlights, Bezel light-catch) ── */
+        /* ── Refined Frosted Liquid-Glass Panel (deep blur, crisp hairline stroke, top sheen) ── */
         div[data-testid="stVerticalBlockBorderDiv"] {
-            background: rgba(10, 8, 20, 0.55) !important;
-            background-image: 
-                linear-gradient(135deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.01) 100%),
-                linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, transparent 40%) !important; /* Gloss reflection sheen! */
-            backdrop-filter: blur(35px) saturate(220%) contrast(115%) !important;
-            -webkit-backdrop-filter: blur(35px) saturate(220%) contrast(115%) !important;
-            border: 1.5px solid rgba(255, 255, 255, 0.06) !important;
-            border-left: 1.5px solid rgba(255, 255, 255, 0.16) !important; /* Bezel light catch! */
-            border-top: 1.5px solid rgba(255, 255, 255, 0.16) !important;  /* Bezel light catch! */
-            border-radius: 20px !important;
-            padding: 16px !important;
-            box-shadow: 
-                0 20px 40px 0 rgba(0, 0, 0, 0.7), 
-                inset 0 1px 1px 0 rgba(255, 255, 255, 0.16), /* Top-left inner catch light! */
-                inset 0 -1px 1px 0 rgba(0, 0, 0, 0.4) !important;
-            
+            position: relative;
+            background: rgba(16, 21, 38, 0.46) !important;
+            background-image:
+                linear-gradient(160deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.015) 38%, rgba(255, 255, 255, 0) 100%) !important;
+            backdrop-filter: blur(28px) saturate(180%) !important;
+            -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
+            border: 1px solid var(--glass-stroke) !important;
+            border-radius: 22px !important;
+            padding: 18px !important;
+            box-shadow:
+                0 16px 40px -8px rgba(0, 0, 0, 0.55),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.14),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.02) !important;
+
             /* High-Performance GPU Hardware Acceleration Overrides */
             transform: translate3d(0, 0, 0) !important;
             will-change: transform, backdrop-filter !important;
-            
+
             animation: subtle-fade-in 0.4s ease-out !important;
             transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease !important;
         }
-        
+
+        /* Subtle top-edge specular highlight that reads as a glass bevel */
+        div[data-testid="stVerticalBlockBorderDiv"]::before {
+            content: "";
+            position: absolute;
+            inset: 0 0 auto 0;
+            height: 1px;
+            border-radius: 22px 22px 0 0;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
         @keyframes subtle-fade-in {
             from { opacity: 0; transform: translate3d(0, 5px, 0); }
             to { opacity: 1; transform: translate3d(0, 0, 0); }
         }
-        
-        /* ── Premium smooth border glow & elevation transition ── */
+
+        /* ── Smooth aurora border glow & elevation on hover ── */
         div[data-testid="stVerticalBlockBorderDiv"]:hover {
-            border-color: rgba(99, 102, 241, 0.45) !important; /* Elegant Indigo Bezel Glow */
-            transform: translate3d(0, -3px, 0) !important; /* Subtle premium elevation */
-            box-shadow: 
-                0 25px 50px 0 rgba(0, 0, 0, 0.8), 
-                0 0 20px 0 rgba(99, 102, 241, 0.18), 
-                inset 0 1px 1px 0 rgba(255, 255, 255, 0.25) !important;
+            border-color: rgba(56, 232, 255, 0.40) !important; /* Aurora Cyan bezel glow */
+            transform: translate3d(0, -3px, 0) !important;
+            box-shadow:
+                0 28px 56px -10px rgba(0, 0, 0, 0.65),
+                0 0 28px -4px rgba(56, 232, 255, 0.22),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.22) !important;
         }
 
         /* ── Perfect Alignment styling override for Header containers containing .header-marker ── */
         div[data-testid="stVerticalBlockBorderDiv"]:has(.header-marker) {
-            background: rgba(255, 255, 255, 0.02) !important;
-            background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, transparent 100%) !important;
-            border: 1px solid rgba(255, 255, 255, 0.06) !important;
-            border-left: 1px solid rgba(255, 255, 255, 0.12) !important;
-            border-top: 1px solid rgba(255, 255, 255, 0.12) !important;
-            border-radius: 10px !important;
-            padding: 3px 10px !important; /* Shrunk vertical padding to compress box height */
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3) !important;
+            background: rgba(255, 255, 255, 0.025) !important;
+            background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, transparent 100%) !important;
+            border: 1px solid rgba(255, 255, 255, 0.08) !important;
+            border-radius: 12px !important;
+            padding: 4px 10px !important; /* Shrunk vertical padding to compress box height */
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28) !important;
             transform: none !important;
             transition: none !important;
             min-height: auto !important; /* Forces layout to collapse tightly */
         }
-        
+
+        div[data-testid="stVerticalBlockBorderDiv"]:has(.header-marker)::before {
+            display: none;
+        }
+
         div[data-testid="stVerticalBlockBorderDiv"]:has(.header-marker):hover {
-            border-color: rgba(255, 255, 255, 0.06) !important;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3) !important;
+            border-color: rgba(255, 255, 255, 0.08) !important;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28) !important;
             transform: none !important;
         }
 
@@ -263,14 +307,15 @@ st.markdown(
         /* ── Column Headers Visual styling ── */
         .col-header-box {
             text-align: center;
-            font-weight: 800;
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 700;
             text-transform: uppercase;
-            font-size: 16.5px; /* Upscaled typography for bold premium visibility */
-            letter-spacing: 2.2px;
+            font-size: 15px;
+            letter-spacing: 3px;
             margin: 0 !important;
             padding: 0 !important;
-            line-height: 1.15 !important; /* Tight line height for ultra-compact layout */
-            text-shadow: 0 0 10px rgba(255, 255, 255, 0.25); /* soft clean premium glow */
+            line-height: 1.2 !important; /* Tight line height for ultra-compact layout */
+            text-shadow: 0 0 14px rgba(255, 255, 255, 0.18); /* soft clean premium glow */
         }
 
         .header-volume { color: #d8b4fe; }
@@ -281,30 +326,35 @@ st.markdown(
 
         /* ── AI Analysis Card Components ── */
         .ai-card-title {
+            font-family: 'Space Grotesk', sans-serif;
             font-size: 16px;
-            font-weight: 800;
-            margin-bottom: 8px;
+            font-weight: 700;
+            letter-spacing: 0.3px;
+            margin-bottom: 10px;
             display: flex;
             align-items: center;
         }
-        
+
         .ai-card-score {
-            font-size: 15px;
-            font-weight: 800;
-            margin-bottom: 10px;
-            padding: 4px 10px;
-            border-radius: 6px;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+            padding: 5px 12px;
+            border-radius: 999px; /* Pill badge */
             display: inline-block;
+            backdrop-filter: blur(6px);
         }
-        
-        .score-excellent { background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #34d399; }
-        .score-warning { background: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #fbbf24; }
-        .score-critical { background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #f87171; }
+
+        .score-excellent { background: rgba(16, 185, 129, 0.14); border: 1px solid rgba(52, 211, 153, 0.55); color: #4ade80; box-shadow: 0 0 16px -4px rgba(16, 185, 129, 0.5); }
+        .score-warning { background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(251, 191, 36, 0.55); color: #fbbf24; box-shadow: 0 0 16px -4px rgba(245, 158, 11, 0.5); }
+        .score-critical { background: rgba(239, 68, 68, 0.14); border: 1px solid rgba(248, 113, 113, 0.55); color: #f87171; box-shadow: 0 0 16px -4px rgba(239, 68, 68, 0.5); }
 
         .ai-card-explanation {
-            font-size: 12px;
-            line-height: 1.5;
-            color: #cbd5e1;
+            font-size: 12.5px;
+            line-height: 1.6;
+            color: #c2ccdb;
             margin-bottom: 0px;
         }
         
@@ -640,8 +690,8 @@ def generate_mock_health_score(symbol: str) -> dict:
 st.sidebar.markdown(
     """
     <div style='text-align: center; margin-bottom: 20px;'>
-        <h2 style='color: #6366f1; font-weight: 800; letter-spacing: 2px; margin-bottom: 0px;'>🛡️ CRYPTOSENSE</h2>
-        <p style='color: #8fa0b5; font-size: 11px; text-transform: uppercase; font-weight: 600;'>AI Shield & Decision System</p>
+        <h2 style="font-family: 'Space Grotesk', sans-serif; background: linear-gradient(92deg, #38e8ff 0%, #a78bfa 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700; letter-spacing: 2px; margin-bottom: 2px;">🛡️ CRYPTOSENSE</h2>
+        <p style='color: #8fa0b5; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 600;'>AI Shield &amp; Decision System</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -777,8 +827,8 @@ with title_cols[0]:
     st.markdown(
         """
         <div style='text-align: left; margin-bottom: 32px;'>
-            <h1 style='font-weight: 800; font-size: 44px; letter-spacing: 2px; color: #ffffff; text-shadow: 0 0 15px rgba(99, 102, 241, 0.4); margin-bottom: 0px;'>CRYPTO ANALYTICS DASHBOARD</h1>
-            <p style='color: #8fa0b5; font-size: 15px; margin-top: 4px; letter-spacing: 1px; text-transform: uppercase;'>Real-time Token Analysis & LLM Insights</p>
+            <h1 style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 44px; letter-spacing: 1px; background: linear-gradient(92deg, #ffffff 0%, #a5f3fc 45%, #c4b5fd 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; text-shadow: 0 0 28px rgba(56, 232, 255, 0.18); margin-bottom: 0px;">CRYPTO ANALYTICS DASHBOARD</h1>
+            <p style='color: #8fa0b5; font-size: 14px; margin-top: 6px; letter-spacing: 2px; text-transform: uppercase;'>Real-time Token Analysis &nbsp;·&nbsp; LLM Insights</p>
         </div>
         """,
         unsafe_allow_html=True,
