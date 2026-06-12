@@ -136,7 +136,7 @@ class TradeAggregator(BaseTimeBucketAggregator):
             acc.add(price, qty, trade_time_ms, is_buyer_maker)
 
         # Flush any buckets that are fully in the past
-        self._maybe_flush(trade_time_ms)
+        self.maybe_flush(trade_time_ms)
 
     def _should_flush(self, acc: CandleAccumulator) -> bool:
         return acc.trade_count > 0

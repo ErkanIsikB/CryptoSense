@@ -9,7 +9,6 @@ import websockets
 
 from src.core.config import settings
 from src.sinks.jsonl_sink import JsonlFileSink
-# from src.core.config.settings import BITQUERY_API_KEY # Kendi config yapına göre açabilirsin
 
 BITQUERY_WS_URL = "wss://streaming.bitquery.io/graphql"
 
@@ -58,14 +57,14 @@ async def run_ws_whale_trades():
         try:
             async with websockets.connect(
                 BITQUERY_WS_URL, 
-                subprotocols=["graphql-ws"],
+                subprotocols=[websockets.Subprotocol("graphql-ws")],
               additional_headers={"Authorization": f"Bearer {settings.BITQUERY_API_KEY}"}
             ) as ws:
                 
                 # GraphQL WS Protocol Init
                 await ws.send(json.dumps({"type": "connection_init"}))
                 
-                # Connection_ack bekleme ve aboneliği başlatma
+                # Wait for connection_ack and start subscription
                 async for message in ws:
                     init_response = json.loads(message)
                     if init_response.get("type") == "connection_ack":
@@ -78,7 +77,7 @@ async def run_ws_whale_trades():
                         logging.info("Connected and subscribed to Bitquery Whale Trades Stream")
                         break
                 
-                # Veriyi dinleme
+                # Listen to data
                 async for message in ws:
                   data = json.loads(message)
                   if data.get("type") == "data":

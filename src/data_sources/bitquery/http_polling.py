@@ -11,7 +11,7 @@ from src.core.config import settings
 from src.sinks.jsonl_sink import JsonlFileSink
 
 HTTP_URL = "https://streaming.bitquery.io/graphql"
-POLLING_INTERVAL = 300  # 5 Dakikada bir çalışacak
+POLLING_INTERVAL = 300
 
 BSC_QUERY = """
 {

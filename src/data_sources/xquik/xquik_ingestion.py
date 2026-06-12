@@ -90,7 +90,7 @@ MAX_OFFTOPIC_COIN_TAGS = 2
 MIN_PROSE_WORDS = 3
 
 
-def _is_offtopic_news_tweet(symbol: str, text: str) -> bool:
+def is_offtopic_news_tweet(symbol: str, text: str) -> bool:
     """True when a tweet only touches ``symbol`` through hashtag/cashtag spam."""
     symbol_terms = _SYMBOL_TERMS.get(symbol)
     if symbol_terms is None:
@@ -401,7 +401,7 @@ async def _poll_and_score_cycle(
                 continue
             if data.get("isRetweet"):
                 continue
-            if _is_offtopic_news_tweet(symbol, text):
+            if is_offtopic_news_tweet(symbol, text):
                 offtopic += 1
                 continue
             if not is_english(text):
@@ -505,17 +505,7 @@ async def start_xquik_sentiment_stream(stop: asyncio.Event) -> None:
         LOGGER.info("fast-forwarding event cursors to skip old tweets")
         await _fast_forward_cursors(client, symbol_monitors)
 
-        async def periodic_flusher() -> None:
-            while not stop.is_set():
-                try:
-                    await asyncio.sleep(15.0)
-                    now_s = time.time()
-                    # Passively flushes any stale buckets whose logical end times are in the past
-                    aggregator.maybe_flush(now_s)
-                except Exception as e:
-                    LOGGER.error("error in periodic sentiment flusher: %s", e)
-
-        flusher_task = asyncio.create_task(periodic_flusher())
+        flusher_task = asyncio.create_task(aggregator.run_periodic_flusher(stop))
 
         try:
             while not stop.is_set():

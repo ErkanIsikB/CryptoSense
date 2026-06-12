@@ -1,9 +1,9 @@
 # CryptoSense Automated Test Suite Execution Report
 
 **Execution Status**: 🟢 PASS
-**Date/Time**: 2026-06-12 00:49:14
-**Total Duration**: 2m 40.3s
-**Python Version**: 3.14.0
+**Date/Time**: 2026-06-12 18:41:11
+**Total Duration**: 4m 15.2s
+**Python Version**: 3.12.10
 
 ## Executive Summary
 
@@ -11,64 +11,64 @@
 
 | Test Suite | Total Tests | Passed | Failed | Skipped | Duration |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| Unit Tests | 24 | 24 | 0 | 0 | 3.31s |
-| Database Integration | 2 | 2 | 0 | 0 | 3.42s |
-| XQuik Live API | 1 | 1 | 0 | 0 | 2m 9.1s |
-| **TOTAL** | **27** | **27** | **0** | **0** | **2m 40.3s** |
+| Unit Tests | 24 | 24 | 0 | 0 | 1m 51.5s |
+| Database Integration | 2 | 2 | 0 | 0 | 3.87s |
+| XQuik Live API | 1 | 1 | 0 | 0 | 2m 9.4s |
+| **TOTAL** | **27** | **27** | **0** | **0** | **4m 15.2s** |
 
 ## 📋 Detailed Per-Test Results
 
 ### 📊 Data Processing
-> **3/3** tests passed — total duration: **2ms**
+> **3/3** tests passed — total duration: **9ms**
 
 | Status | Test | Duration | Description |
 | :---: | :--- | :--- | :--- |
-| ✅ | `test_align_labels_to_sequences` | 2ms | Verifies that ground-truth labels are correctly aligned to windowed feature sequences. |
+| ✅ | `test_align_labels_to_sequences` | 9ms | Verifies that ground-truth labels are correctly aligned to windowed feature sequences. |
 | ✅ | `test_slice_continuous_windows` | <1ms | Validates sliding-window slicing on continuous time-series data without gaps. |
 | ✅ | `test_slice_continuous_windows_with_gaps` | <1ms | Ensures the window slicer correctly handles temporal gaps in the input data. |
 
 ### 🧠 LSTM Autoencoder
-> **2/2** tests passed — total duration: **24ms**
+> **2/2** tests passed — total duration: **720ms**
 
 | Status | Test | Duration | Description |
 | :---: | :--- | :--- | :--- |
-| ✅ | `test_dimensions_and_forward_pass` | 18ms | Checks that the LSTM Autoencoder output tensor dimensions match the input. |
-| ✅ | `test_parameters_gradients` | 6ms | Confirms that gradients flow through all trainable parameters during backprop. |
+| ✅ | `test_dimensions_and_forward_pass` | 74ms | Checks that the LSTM Autoencoder output tensor dimensions match the input. |
+| ✅ | `test_parameters_gradients` | 646ms | Confirms that gradients flow through all trainable parameters during backprop. |
 
 ### 🔄 Retraining Scheduler
-> **2/2** tests passed — total duration: **10ms**
+> **2/2** tests passed — total duration: **6ms**
 
 | Status | Test | Duration | Description |
 | :---: | :--- | :--- | :--- |
-| ✅ | `test_retrain_job` | 7ms | Verifies that the periodic retrain job invokes the training pipeline correctly. |
-| ✅ | `test_start_and_shutdown_scheduler` | 3ms | Tests that the APScheduler-based retraining loop starts and shuts down cleanly. |
+| ✅ | `test_retrain_job` | 5ms | Verifies that the periodic retrain job invokes the training pipeline correctly. |
+| ✅ | `test_start_and_shutdown_scheduler` | 2ms | Tests that the APScheduler-based retraining loop starts and shuts down cleanly. |
 
 ### 💬 Sentiment Scorer (FinBERT)
-> **7/7** tests passed — total duration: **3.26s**
+> **7/7** tests passed — total duration: **1m 50.7s**
 
 | Status | Test | Duration | Description |
 | :---: | :--- | :--- | :--- |
 | ✅ | `test_backward_compat_alias` | <1ms | Verifies score_texts_batched is a backward-compatible alias for score_news_batched. |
 | ✅ | `test_compound_score` | <1ms | Validates the compound score formula: score = P(positive) − P(negative). |
-| ✅ | `test_cryptobert_fallback_if_unavailable` | 1.42s | Ensures CryptoBERT fallback returns neutral scores when the pipeline is unavailable. |
-| ✅ | `test_cryptobert_model_f1_score` | 354ms | Validates CryptoBERT classification performance (Macro F1 ≥ 0.70) on a 18-sample crypto tweet dataset. |
-| ✅ | `test_finbert_fallback_if_unavailable` | 695ms | Ensures FinBERT fallback returns neutral scores when the pipeline is unavailable. |
-| ✅ | `test_finbert_model_f1_score` | 474ms | Validates FinBERT classification performance (Macro F1 ≥ 0.75) on a 24-sample news dataset. |
-| ✅ | `test_is_english` | 312ms | Validates English language detection for non-English tweet filtering. |
+| ✅ | `test_cryptobert_fallback_if_unavailable` | 1m 47.5s | Ensures CryptoBERT fallback returns neutral scores when the pipeline is unavailable. |
+| ✅ | `test_cryptobert_model_f1_score` | 532ms | Validates CryptoBERT classification performance (Macro F1 ≥ 0.70) on a 18-sample crypto tweet dataset. |
+| ✅ | `test_finbert_fallback_if_unavailable` | 1.91s | Ensures FinBERT fallback returns neutral scores when the pipeline is unavailable. |
+| ✅ | `test_finbert_model_f1_score` | 78ms | Validates FinBERT classification performance (Macro F1 ≥ 0.75) on a 24-sample news dataset. |
+| ✅ | `test_is_english` | 670ms | Validates English language detection for non-English tweet filtering. |
 
 ### 🛑 Signal Handling
-> **1/1** tests passed — total duration: **10ms**
+> **1/1** tests passed — total duration: **3ms**
 
 | Status | Test | Duration | Description |
 | :---: | :--- | :--- | :--- |
-| ✅ | `test_setup_signals_sets_event` | 10ms | Confirms that SIGTERM/SIGINT handlers are wired to set the shutdown event. |
+| ✅ | `test_setup_signals_sets_event` | 3ms | Confirms that SIGTERM/SIGINT handlers are wired to set the shutdown event. |
 
 ### 🗄️ TimescaleDB Sink
-> **1/1** tests passed — total duration: **2ms**
+> **1/1** tests passed — total duration: **5ms**
 
 | Status | Test | Duration | Description |
 | :---: | :--- | :--- | :--- |
-| ✅ | `test_write_routing` | 2ms | Verifies that incoming data is routed to the correct DB table (trades vs orderbook). |
+| ✅ | `test_write_routing` | 5ms | Verifies that incoming data is routed to the correct DB table (trades vs orderbook). |
 
 ### 🔍 XQuik Off-Topic Filter
 > **8/8** tests passed — total duration: **<1ms**
@@ -85,94 +85,93 @@
 | ✅ | `test_unknown_symbol_is_never_filtered` | <1ms | Ensures tweets for unknown/untracked symbols bypass the off-topic filter. |
 
 ### 🗃️ Database Integration (Transaction-Isolated)
-> **2/2** tests passed — total duration: **3.42s**
+> **2/2** tests passed — total duration: **3.87s**
 
 | Status | Test | Duration | Description |
 | :---: | :--- | :--- | :--- |
-| ✅ | `test_trade_aggregator` | 1.71s | Pushes mock trade data through the aggregator and verifies correct 5-min candle insertion. |
-| ✅ | `test_orderbook_aggregator` | 1.71s | Pushes mock orderbook snapshots through the aggregator and verifies 5-min summary insertion. |
+| ✅ | `test_trade_aggregator` | 1.94s | Pushes mock trade data through the aggregator and verifies correct 5-min candle insertion. |
+| ✅ | `test_orderbook_aggregator` | 1.94s | Pushes mock orderbook snapshots through the aggregator and verifies 5-min summary insertion. |
 
 ### 🌐 XQuik Live API
-> **1/1** tests passed — total duration: **2m 9.1s**
+> **1/1** tests passed — total duration: **2m 9.4s**
 
 | Status | Test | Duration | Description |
 | :---: | :--- | :--- | :--- |
-| ✅ | `test_live_tweets` | 2m 9.1s | End-to-end live API call to XQuik to verify connectivity and response parsing. |
+| ✅ | `test_live_tweets` | 2m 9.4s | End-to-end live API call to XQuik to verify connectivity and response parsing. |
 
 ## 🐦 Live Tweet Sentiment Analysis
 
-> **56** tweets collected from XQuik were scored by FinBERT
+> **55** tweets collected from XQuik were scored by FinBERT
 
 ### Summary Statistics
 
 | Metric | Value |
 | :--- | :--- |
 | **Overall Mood** | 🟢 Bullish |
-| **Average Compound Score** | +0.3452 |
-| **Positive Tweets** | 47 (84%) |
-| **Negative Tweets** | 1 (2%) |
-| **Neutral Tweets** | 8 (14%) |
+| **Average Compound Score** | +0.3865 |
+| **Positive Tweets** | 45 (82%) |
+| **Negative Tweets** | 3 (5%) |
+| **Neutral Tweets** | 7 (13%) |
 
 ### Individual Tweet Scores
 
 | # | Sentiment | Compound | Pos | Neg | Neu | Tweet |
 | :---: | :---: | :--- | :--- | :--- | :--- | :--- |
-| 1 | 🟢 | +0.8658 | 0.866 | 0.000 | 0.134 | On @solana, every second counts. In @SolgunGG, every battle matters. With $LOBO, every wolf in the pack has a role to… |
-| 2 | 🟢 | +0.7418 | 0.743 | 0.001 | 0.255 | They’ve been trying to cover it up for years, diverting attention, trying to tarnish its image and none of that has w… |
-| 3 | 🟢 | +0.6836 | 0.687 | 0.003 | 0.310 | Finally the US Bitcoin Reserve gets mentioned, it's been a long drought.   Let's get to work and make it happen in th… |
-| 4 | 🟢 | +0.6725 | 0.673 | 0.000 | 0.327 | solana:32CdQdBUxbCsLy5AUHWmyidfwhgGUr9N573NBUrDpump 🚀 |
-| 5 | 🟢 | +0.6521 | 0.654 | 0.002 | 0.343 | PillSwap deep dive 🔄🔥  The safest, fastest way to trade across chains. No more juggling DEXs, bridges, or guessing if… |
-| 6 | 🟢 | +0.6521 | 0.654 | 0.002 | 0.343 | PillSwap deep dive 🔄🔥  The safest, fastest way to trade across chains. No more juggling DEXs, bridges, or guessing if… |
-| 7 | 🟢 | +0.6104 | 0.611 | 0.000 | 0.389 | pumped to work with the chads at SF and Sunrise, the launch of $SPCX on @Solana is a great ecosystem moment, glad to … |
-| 8 | 🟢 | +0.5677 | 0.639 | 0.072 | 0.289 | Swan is the band kids of Bitcoin but they don’t play any instruments |
-| 9 | 🟢 | +0.5636 | 0.564 | 0.000 | 0.436 | great news seeing a patron of arts collecting pixelart  the strategy is indeed to build bridges with digital art coll… |
-| 10 | 🟢 | +0.5635 | 0.570 | 0.006 | 0.424 | @WhiteHouse  #Does cryptocurrency have any meaning? There is only one way: banks can raise interest rates. Does it ma… |
-| 11 | 🟢 | +0.5629 | 0.604 | 0.041 | 0.354 | Retail Ry says Bitcoin doesn’t need to fit anyone’s definition of what it should be  "Everyone has their idea of what… |
-| 12 | 🟢 | +0.5495 | 0.550 | 0.001 | 0.449 | Bitcoin 1H Outlook 👀  The trend remains your friend until proven otherwise.  No need to chase candles—wait for confir… |
-| 13 | 🟢 | +0.5464 | 0.547 | 0.000 | 0.453 | "Our general strategy is just keep acquiring Bitcoin, never sell the Bitcoin." https://t.co/sPwSh2smUL |
-| 14 | 🟢 | +0.5433 | 0.543 | 0.000 | 0.457 | Prediction markets are redefining how modern quantitative funds consume alternative data. Platforms built on @solana … |
-| 15 | 🟢 | +0.5432 | 0.544 | 0.000 | 0.456 | @mascots2026 let’s show them solana:8GxLxKA8tf3h8JUkXFfP4dNyn6D2vvwyGif5wanRpump is the running meta. Let’s pump |
-| 16 | 🟢 | +0.5364 | 0.536 | 0.000 | 0.463 | The SEC abolishing the PDT rule is a massive macro catalyst. TradFi is now in direct competition with crypto for aggr… |
-| 17 | 🟢 | +0.5230 | 0.523 | 0.000 | 0.477 | After a long time working on Yaoming on BNB running it to 2 million with the creator onboard, we decided to relaunch … |
-| 18 | 🟢 | +0.5023 | 0.503 | 0.001 | 0.496 | The best decision I ever made had nothing to do with bitcoin. It was deciding to pursue Jesus and let that be the fil… |
-| 19 | 🟢 | +0.4832 | 0.544 | 0.061 | 0.395 | This is where real assets are tokenized, for example: you can swap Bitcoin for gold, in a DEX space, I want to introd… |
-| 20 | 🟢 | +0.4779 | 0.480 | 0.003 | 0.517 | Caution,,,,, c,,, #CexCrypto is a fake platform preying on investors! ❌ Stuck with blocked withdrawals? Don’t give up… |
-| 21 | 🟢 | +0.4442 | 0.447 | 0.002 | 0.551 | Do not invest,,,,,,#CexCrypto is a fake platform preying on investors! ❌ Stuck with blocked withdrawals? Don’t give u… |
-| 22 | 🟢 | +0.4442 | 0.447 | 0.002 | 0.551 | Do not invest,,,,,,#CexCrypto is a fake platform preying on investors! ❌ Stuck with blocked withdrawals? Don’t give u… |
-| 23 | 🟢 | +0.4332 | 0.439 | 0.005 | 0.556 | 📊 TRAMDY Market Snapshot — June 11  ₿ BTC: $63,465 (+3.4% / 24h) Ξ ETH: $1,673 (+3.8% / 24h)  ⚙️ Derivatives check: •… |
-| 24 | 🟢 | +0.4059 | 0.407 | 0.001 | 0.592 | 🔏 Top 10 Protocols by TVL: - Variations, June 11, 2026  1. Binance CEX $BNB - Chain: Multi-Chain, Category: CEX ▪ TVL… |
-| 25 | 🟢 | +0.3943 | 0.427 | 0.032 | 0.541 | ''pls ignore the musical chairs ending and buy the token I bought 3% of at 20k marketcap''  If you're believing in co… |
-| 26 | 🟢 | +0.3892 | 0.427 | 0.038 | 0.536 | Bitcoin Holders: This Is Hard To Ignore Now  Timestamps: 0:00 - tides are turning 1:36 - Long-term holders 2:09 - 81%… |
-| 27 | 🟢 | +0.3742 | 0.375 | 0.001 | 0.623 | i’m giving away a free 1gb esım for estonia, bought via @nadanada_me with bitcoin lightning through @nuri   free give… |
-| 28 | 🟢 | +0.3712 | 0.372 | 0.000 | 0.628 | https://t.co/0xTxG4vLXV - 🚀 Deposit Crypto &amp; Claim Up to $1,000 at Fair Go! 💰🎰 Play pokies with Bitcoin &amp; oth… |
-| 29 | 🟢 | +0.3678 | 0.371 | 0.003 | 0.626 | @satsukikatayama  #Does cryptocurrency have any meaning? There is only one way: banks can raise interest rates. Does … |
-| 30 | 🟢 | +0.3445 | 0.345 | 0.001 | 0.654 | Bid on more solana:9UuLsJ3jf8ViBNeRcwXD53re5G3ypgfKK3s2EiMMpump   aixbt knows...  https://t.co/Vc1bdbvGSY |
-| 31 | 🟢 | +0.3256 | 0.332 | 0.006 | 0.662 | Privacy-preserving web search paid with Bitcoin + Cashu.  Under the hood: - Top up SEARCH tokens (Cashu Ecash) with L… |
-| 32 | 🟢 | +0.3009 | 0.364 | 0.064 | 0.572 | 🚨 $BTC W-PATTERN BREAKOUT ATTEMPT 🚨  From 63.5k to 69.5k.  Next level: 70k+. Let's go. #Bitcoin https://t.co/HjioK2HPoF |
-| 33 | 🟢 | +0.2971 | 0.351 | 0.054 | 0.595 | $btc signal of the day:  bear phase, 28 days in a row  price ~$63.2k  stress is high with 9.8m btc (48.8% of supply) … |
-| 34 | 🟢 | +0.2900 | 0.291 | 0.001 | 0.709 | $BTC planning to make my first 50rr So help me God😔🤲🏽 Na red I wan dey see everywhere abeg😅💪🏾  #BTC https://t.co/jz1D… |
-| 35 | 🟢 | +0.2819 | 0.386 | 0.104 | 0.510 | bitcoin:native   Most talk about cycles from a time perspective, arguing Bitcoin has rigid 4-year cycles, but I have … |
-| 36 | 🟢 | +0.2583 | 0.264 | 0.006 | 0.731 | Ca: EbXdnYXgHGqMkcbjbtj2PKzi21oNaDYmqG45vpDnpump  Posted on the official Yaoming BNB page too |
-| 37 | 🟢 | +0.2315 | 0.232 | 0.000 | 0.768 | Even in worst bearish scenario where $BTC dumps to $50k, I think $SOL is more likely to visit the $45-$50 zone than $… |
-| 38 | 🟢 | +0.2310 | 0.232 | 0.001 | 0.768 | Crypto Market Update: total cap $2.259T, +3.4% in 24h on $81.285B volume. BTC dominance 56.3%, ETH 8.96%. Relief boun… |
-| 39 | 🟢 | +0.2310 | 0.232 | 0.001 | 0.768 | Crypto Market Update: total cap $2.259T, +3.4% in 24h on $81.285B volume. BTC dominance 56.3%, ETH 8.96%. Relief boun… |
-| 40 | 🟢 | +0.2060 | 0.206 | 0.000 | 0.794 | Bitcoin climbs 2.52% to $62,857 after recent volatility. Glassnode's 'The Bitcoin Vector #59' offers insights into cu… |
-| 41 | 🟢 | +0.1955 | 0.196 | 0.000 | 0.804 | Bitcoin has been one of the biggest talking points this week.  A lot of people are looking for a single explanation b… |
-| 42 | 🟢 | +0.1904 | 0.193 | 0.002 | 0.805 | 🚨 Options Expiry Alert 🚨  At 08:00 UTC tomorrow, ~$2.51B in crypto options are set to expire on Deribit.  $BTC: $2.23… |
-| 43 | 🟢 | +0.1904 | 0.193 | 0.002 | 0.805 | 🚨 Options Expiry Alert 🚨  At 08:00 UTC tomorrow, ~$2.51B in crypto options are set to expire on Deribit.  $BTC: $2.23… |
-| 44 | 🟢 | +0.1863 | 0.191 | 0.005 | 0.804 | This is the guy @KryptoFynn who claimed oil would breakout next week, and there hasn't been a single mention of oil s… |
-| 45 | 🟢 | +0.1822 | 0.433 | 0.250 | 0.317 | The next phase of Solana will not be judged by TPS.  Institutions do not come onchain because a chain is cool.  They … |
-| 46 | 🟢 | +0.1799 | 0.181 | 0.001 | 0.818 | 🎁 Daily Case claimed! 🚀  Use my link and unbox rewards worth up to $1,250 daily 👇 https://t.co/VbCDp4g2V4  #SOLPump #… |
-| 47 | 🟢 | +0.1614 | 0.162 | 0.001 | 0.837 | USDC - Ethereum  86,563,537.15 USDC ($86,563,537)  DEX → Unknown  https://t.co/Pa5DWTIOQV |
-| 48 | 🟡 | +0.1491 | 0.150 | 0.001 | 0.850 | solana:7HgfXftRBBqsYtAEYcqjGLQrNJLL6Tww9ek4rE3Apump only getting bigger https://t.co/wac7yaarFB |
-| 49 | 🟡 | +0.1284 | 0.132 | 0.004 | 0.865 | #Bitcoin continues to move sideways, and nothing has changed yet. The price has not yet approached the resistance are… |
-| 50 | 🟡 | +0.1263 | 0.127 | 0.000 | 0.873 | CONCISE AND UPDATED LIST OF SOLANA AGREEMENTS, DIVIDED BY CATEGORY    #Solana https://t.co/8pQaZUVWLg |
-| 51 | 🟡 | +0.0788 | 0.079 | 0.000 | 0.921 | 💰$BTC/USDT \| 15m Timeframe 🕯  $BTC is currently trading within a triangle pattern on the shorter timeframe. We will … |
-| 52 | 🟡 | +0.0623 | 0.063 | 0.000 | 0.937 | Requesting $BNB funds from the #Stakely Faucet on the BNB Chain blockchain. Request ID: IZ8URKBK https://t.co/OjmkOHT3tz |
-| 53 | 🟡 | +0.0418 | 0.042 | 0.001 | 0.957 | Requesting $SOL funds from the #Stakely Faucet on the Solana blockchain. Request ID: IG0XT86L #privacy https://t.co/y… |
-| 54 | 🟡 | +0.0345 | 0.035 | 0.000 | 0.965 | BNB perp liquidation pressure elevated at 44/100. 3 cascade events and 2 warning precursors in the last 2h. ADA and X… |
-| 55 | 🟡 | -0.0722 | 0.199 | 0.271 | 0.530 | $BTC rejected from the key resistance level exactly as expected and retraced to test the ascending trendline support.… |
-| 56 | 🔴 | -0.9698 | 0.004 | 0.974 | 0.022 | I can’t imagine buying the SpaceX IPO when you can buy Bitcoin at $62K |
+| 1 | 🟢 | +0.7855 | 0.786 | 0.001 | 0.213 | Perfect time to remind everyone that SpaceX is now the 8th largest public company holder of Bitcoin.  It has 18,712 b… |
+| 2 | 🟢 | +0.7823 | 0.789 | 0.006 | 0.205 | My thesis is the best way to invest into A.I, data centers, robotics, space? Etc is to buy and hold Bitcoin |
+| 3 | 🟢 | +0.7614 | 0.762 | 0.000 | 0.238 | Almost a year ago, my @solanamobile arrived.  Between moving across the world, changing cities, dealing with visas, f… |
+| 4 | 🟢 | +0.7501 | 0.750 | 0.000 | 0.250 | Bitcoin could drop to around the $60k zone again, and then bounce back up to the $70,000 - $100,000 zone.  $BTC is ju… |
+| 5 | 🟢 | +0.7054 | 0.706 | 0.000 | 0.294 | 🚨BREAKING:  Bitcoin surges above $64,000, triggering $30 million in shorts liquidation in just one hour. https://t.co… |
+| 6 | 🟢 | +0.6931 | 0.693 | 0.000 | 0.307 | solana:7YMkZZwdcwUbXKjYpr5gFAVoB6aF4f9iLWK6pUcppump to $10m mcap. https://t.co/EwjWkm6n2L |
+| 7 | 🟢 | +0.6916 | 0.693 | 0.002 | 0.305 | Been up for like 30 hours finally going back to my air bnb to rest up 😭 |
+| 8 | 🟢 | +0.6822 | 0.682 | 0.000 | 0.317 | Buying $GODL is now officially as easy as ordering Uber and here's why you should get positioned  GODL is a digital s… |
+| 9 | 🟢 | +0.6670 | 0.667 | 0.000 | 0.333 | The largest initial public offering The world's first trillionaire  One asset behind both: $SPCX   Accessible to EVER… |
+| 10 | 🟢 | +0.6579 | 0.683 | 0.025 | 0.293 | 🐉 Just rolled into ROLLING UP ($ROLL) 🥢  Sick of rugpulls leaving a bad taste? Time for something fresh. ROLLING UP b… |
+| 11 | 🟢 | +0.6423 | 0.643 | 0.000 | 0.357 | New presale alert! 📢  @Forbidden_Oasis is a hidden paradise in the crypto desert. 🏝️ ➡️ BNB rewards for holders ➡️ Tr… |
+| 12 | 🟢 | +0.6350 | 0.635 | 0.000 | 0.364 | 🟣 $GREM is on fire. 🔥  The @GREMTOKEN liquidity pool has become one of the most active environments in the $ASTY netw… |
+| 13 | 🟢 | +0.6193 | 0.620 | 0.000 | 0.380 | solana:4nV5gNwwP68zUDat26ySChREqVaQaLudfJBkSgEzpump and $WOJAK 2 iconic memes with delusional holders who want to see… |
+| 14 | 🟢 | +0.6103 | 0.610 | 0.000 | 0.390 | 1/ The first Venture Token on @solana is @SP3NDdotshop.  SP3ND is already live, generating revenue, and helping users… |
+| 15 | 🟢 | +0.5686 | 0.569 | 0.001 | 0.430 | ethereum:0x68749665ff8d2d112fa859aa293f07a622782f38 send it higher https://t.co/z27vcXWiwa |
+| 16 | 🟢 | +0.5623 | 0.564 | 0.001 | 0.435 | Last 60m - #Coinbase Spot (USD Trades)  📈 Top 3 Gainers: $GIGA (Gigachad) : ↑ 9.06% $FIGHT (FIGHT) : ↑ 7.04% $ALLO (A… |
+| 17 | 🟢 | +0.5623 | 0.564 | 0.001 | 0.435 | Last 60m - #Coinbase Spot (USD Trades)  📈 Top 3 Gainers: $GIGA (Gigachad) : ↑ 9.06% $FIGHT (FIGHT) : ↑ 7.04% $ALLO (A… |
+| 18 | 🟢 | +0.5553 | 0.555 | 0.000 | 0.444 | Bitcoin is back above $64,000  $20,000,000,000 has been added to crypto market in just 30 MINUTES https://t.co/tQ7qjE… |
+| 19 | 🟢 | +0.5475 | 0.548 | 0.000 | 0.452 | Looks like a good day to launch my memecoin too on solana. Have been delaying it for months due to transfer of funds … |
+| 20 | 🟢 | +0.5462 | 0.553 | 0.007 | 0.441 | THE WORLD COMPUTER THESIS ∞  For seventeen years, cryptocurrencies have demonstrated one thing:  They can tokenize sp… |
+| 21 | 🟢 | +0.5348 | 0.540 | 0.005 | 0.456 | As expected, $BTC and $ETH rebounded after finding their local bottoms. June's recovery was largely driven by the rel… |
+| 22 | 🟢 | +0.5348 | 0.540 | 0.005 | 0.456 | As expected, $BTC and $ETH rebounded after finding their local bottoms. June's recovery was largely driven by the rel… |
+| 23 | 🟢 | +0.5212 | 0.522 | 0.000 | 0.478 | all I want is a deviation from this $btc range so we can understand the next move is that too hard to ask? |
+| 24 | 🟢 | +0.5075 | 0.508 | 0.000 | 0.492 | I will be participating in the Hot Emin Trials and $HOTEMIN launch on $AVAX 🔺 |
+| 25 | 🟢 | +0.5075 | 0.508 | 0.000 | 0.492 | I will be participating in the Hot Emin Trials and $HOTEMIN launch on $AVAX 🔺 |
+| 26 | 🟢 | +0.4998 | 0.502 | 0.002 | 0.496 | IA says the truth, there is no second best 🤣  Ethereum |
+| 27 | 🟢 | +0.4851 | 0.485 | 0.000 | 0.514 | ok yeah ggs ethereum:0x893643f9e232e4e857f278d61641c955589a7a37 is going so high, this teams network is so goated. I’… |
+| 28 | 🟢 | +0.4615 | 0.465 | 0.003 | 0.532 | Bitcoin is on sale👊🏻 The opportunity won't be Buy your Bitcoin P2P on  @hodlhodl   Withdraw it Take custody 🧡 Trezor … |
+| 29 | 🟢 | +0.4225 | 0.423 | 0.001 | 0.576 | 🇯🇵 Japan Just Made Crypto Official  A 55% tax on crypto gains. That's what Japanese investors have been dealing with.… |
+| 30 | 🟢 | +0.4157 | 0.416 | 0.000 | 0.584 | We officially have the animal runner for June   solana:7YMkZZwdcwUbXKjYpr5gFAVoB6aF4f9iLWK6pUcppump |
+| 31 | 🟢 | +0.4151 | 0.416 | 0.001 | 0.583 | What Your D0 Bot Can Do: Trading    Trade crypto directly in Telegram with D0 — safe, fast, and simple.  You can: ▪️S… |
+| 32 | 🟢 | +0.4011 | 0.401 | 0.000 | 0.599 | 🎉If someone had advised you to hoard Bitcoin when it was worthless, you might have thought it was a scam. But today, … |
+| 33 | 🟢 | +0.3757 | 0.377 | 0.001 | 0.623 | Glad to announce that i secured @dedmundos GTD spots for my communities.  Mint Details •Supply: 2,500 •Price: FREE MI… |
+| 34 | 🟢 | +0.3548 | 0.355 | 0.000 | 0.645 | Closing in on 500,000 $BAT locked in the cave!  1179 stakers earning $guano simply by locking $BAT on Solana. https:/… |
+| 35 | 🟢 | +0.3451 | 0.347 | 0.002 | 0.651 | $BTC in Midterm Election Years https://t.co/4viY0qbwah |
+| 36 | 🟢 | +0.3445 | 0.345 | 0.000 | 0.655 | gn Jupiter fam, @JupiterExchange joining the Solana RPC Working Group matters, better read layer means cleaner pricin… |
+| 37 | 🟢 | +0.3435 | 0.345 | 0.002 | 0.653 | Went To Dallas got an air bnb but was all alone 😩 so I had to take care of myself 😭 #nsfwtwt #freak #solo #single htt… |
+| 38 | 🟢 | +0.3360 | 0.338 | 0.002 | 0.660 | 📢 MAJOR ANNOUNCEMENT: WinWave unveils one of its biggest welcome offers yet 🎰 ￳ 📌 More Info in Article Below 👇👇👇 http… |
+| 39 | 🟢 | +0.3360 | 0.338 | 0.002 | 0.660 | 📢 MAJOR ANNOUNCEMENT: WinWave unveils one of its biggest welcome offers yet 🎰 ￳ 📌 More Info in Article Below 👇👇👇 http… |
+| 40 | 🟢 | +0.3302 | 0.400 | 0.070 | 0.530 | Arthur Hayes says a major SpaceX IPO could pull even more capital away from Bitcoin and into AI.  Is AI taking all th… |
+| 41 | 🟢 | +0.3253 | 0.325 | 0.000 | 0.675 | Crypto markets see mixed news today Polish president vetoes crypto bill, KuCoin dispute   Regulatory debates and FTX … |
+| 42 | 🟢 | +0.3040 | 0.305 | 0.001 | 0.695 | Bears are fighting back hard $BTC https://t.co/MuXpmjkb8F |
+| 43 | 🟢 | +0.2990 | 0.300 | 0.001 | 0.699 | took some profit here   $BTC https://t.co/GM1DP1bywr |
+| 44 | 🟢 | +0.2419 | 0.242 | 0.000 | 0.757 | $BTC broke up! Will it hold! https://t.co/dC7D4Xf8lv |
+| 45 | 🟢 | +0.2195 | 0.223 | 0.003 | 0.774 | CRV - DOGE - BNB - SOL (XRP is the same as SOL)  Why does one of the four have nothing to do with the others?  I am r… |
+| 46 | 🟡 | +0.1235 | 0.254 | 0.131 | 0.615 | The first metric that Hyperliquid has flipped Binance over  Wait until hyperliquid:native flips BNB |
+| 47 | 🟡 | +0.1162 | 0.117 | 0.000 | 0.883 | USDC - Ethereum  95,587,074.93 USDC ($95,587,075)  Unknown → Unknown  https://t.co/RKIj8ltB6B |
+| 48 | 🟡 | +0.0846 | 0.085 | 0.000 | 0.915 | Shoutout   @Booksey #Community  solana:3TYgKwkE2Y3rxdw9osLRSpxpXmSC1C1oo19W9KHspump   3TYgKwkE2Y3rxdw9osLRSpxpXmSC1C1… |
+| 49 | 🟡 | +0.0326 | 0.052 | 0.019 | 0.929 | $BTC gave multiple warnings.  Two failed breakouts.  A channel breakdown.  And now a sharp move lower.  The bearish s… |
+| 50 | 🟡 | +0.0247 | 0.220 | 0.195 | 0.585 | $ETH could be a +1 for our planed short if we hit this supply at the same time with $BTC supply and USDT.D demand htt… |
+| 51 | 🟡 | -0.0029 | 0.395 | 0.398 | 0.207 | JUST IN: More Bitcoin Holders Are Underwater Than Profitable, Says Pompliano |
+| 52 | 🟡 | -0.0418 | 0.328 | 0.370 | 0.302 | My biggest takeaway after reading this:  While many people are still debating whether Bitcoin is an asset, others hav… |
+| 53 | 🔴 | -0.1586 | 0.326 | 0.485 | 0.189 | Wild that we’ve been here multiple times in the past 5 years and now that we’re nearing legislation that finally lets… |
+| 54 | 🔴 | -0.8541 | 0.057 | 0.912 | 0.031 | Bitcoin 🙂 |
+| 55 | 🔴 | -0.9537 | 0.005 | 0.959 | 0.036 | Shorted $BTC here at 64k. https://t.co/ANVx9bbQik |
 
 ## 📜 Raw Execution Logs
 

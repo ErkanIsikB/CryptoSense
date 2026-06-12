@@ -7,9 +7,11 @@ completed buckets are flushed to ``tweet_sentiment_5m``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -177,6 +179,16 @@ class SentimentAggregator:
             acc.add(score, tweet_text, engagement, source_weight, source_tier)
 
         self.maybe_flush(tweet_time_s)
+
+    async def run_periodic_flusher(self, stop_event: asyncio.Event, interval_s: float = 15.0) -> None:
+        """Periodically flush stale sentiment buckets until stop_event is set."""
+        while not stop_event.is_set():
+            try:
+                await asyncio.sleep(interval_s)
+                now_s = time.time()
+                self.maybe_flush(now_s)
+            except Exception:
+                LOGGER.exception("error in periodic flusher for sentiment")
 
     def flush_all(self) -> None:
         """Force-flush all open buckets (shutdown)."""

@@ -50,7 +50,9 @@ def _get_finbert_pipeline():
     # noinspection PyBroadException
     try:
         from transformers import pipeline as hf_pipeline
+        import torch
 
+        device = 0 if torch.cuda.is_available() else -1
         _finbert_pipeline = hf_pipeline(  # type: ignore
             "sentiment-analysis",
             model="ProsusAI/finbert",
@@ -59,7 +61,7 @@ def _get_finbert_pipeline():
             top_k=None,
             truncation=True,
             max_length=512,
-            device=0,
+            device=device,
         )
         LOGGER.info("FinBERT model loaded successfully")
     except Exception:
@@ -79,7 +81,9 @@ def _get_cryptobert_pipeline():
     # noinspection PyBroadException
     try:
         from transformers import pipeline as hf_pipeline
+        import torch
 
+        device = 0 if torch.cuda.is_available() else -1
         _cryptobert_pipeline = hf_pipeline(  # type: ignore
             "sentiment-analysis",
             model="ElKulako/cryptobert",
@@ -87,7 +91,7 @@ def _get_cryptobert_pipeline():
             top_k=None,
             truncation=True,
             max_length=512,
-            device=0,
+            device=device,
         )
         LOGGER.info("CryptoBERT model loaded successfully")
     except Exception:

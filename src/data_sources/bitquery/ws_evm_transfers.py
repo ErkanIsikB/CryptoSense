@@ -47,7 +47,7 @@ async def run_ws_evm_transfers():
         try:
             async with websockets.connect(
                 BITQUERY_WS_URL, 
-                subprotocols=["graphql-ws"],
+                subprotocols=[websockets.Subprotocol("graphql-ws")],
               additional_headers={"Authorization": f"Bearer {settings.BITQUERY_API_KEY}"}
             ) as ws:
                 

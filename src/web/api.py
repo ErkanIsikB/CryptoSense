@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Any
+import pandas as pd
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.db.db import execute_query_fetch
+from src.db.db import execute_query_fetch_async
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -71,7 +72,7 @@ LEFT JOIN (
 ) c ON c.bucket = fb.bucket AND c.symbol = TRIM(REPLACE(fb.symbol, 'USDT', ''))
 LEFT JOIN ai_anomalies_5m a ON a.bucket = fb.bucket AND a.symbol = REPLACE(fb.symbol, 'USDT', '')
 ORDER BY bucket DESC, symbol ASC
-LIMIT 50;
+LIMIT 250;
 """
 
 SQL_GET_LATEST_HEALTH_SCORES = """
@@ -100,31 +101,54 @@ def health_check() -> dict[str, str]:
 
 
 @app.get("/api/latest-metrics")
-def get_latest_metrics() -> list[dict[str, Any]]:
-    """Retrieve the latest finalized bucket metrics across all symbols."""
+async def get_latest_metrics() -> list[dict[str, Any]]:
+    """Retrieve the latest finalized bucket metrics across all symbols, with EWMA sentiment."""
     try:
-        rows = execute_query_fetch(SQL_GET_LATEST_METRICS)
+        rows = await execute_query_fetch_async(SQL_GET_LATEST_METRICS)
+        if not rows:
+            return []
+
+        # Convert to Pandas to compute the EWMA per symbol
+        cols = [
+            "bucket", "symbol", "close_price", "volume_5m", "vwap", "net_trade",
+            "spread", "mid_price", "bid_depth", "ask_depth", "imbalance",
+            "sentiment_score", "tweet_count", "net_cex_flow_usd", "mse_score",
+            "is_anomaly", "severity"
+        ]
+        df = pd.DataFrame(rows, columns=cols)
+        df["bucket"] = pd.to_datetime(df["bucket"])
+
+        # Sort chronologically per symbol to calculate correct EWMA values
+        df = df.sort_values(by=["symbol", "bucket"]).reset_index(drop=True)
+        df["sentiment_score"] = df.groupby("symbol")["sentiment_score"].transform(
+            lambda x: x.ewm(span=6, adjust=False).mean()
+        )
+
+        # Sort back to return latest metrics first
+        df = df.sort_values(by=["bucket", "symbol"], ascending=[False, True])
+        latest_df = df.head(50)
+
         result = []
-        for r in rows:
+        for _, r in latest_df.iterrows():
             result.append(
                 {
-                    "bucket": r[0].isoformat() if hasattr(r[0], "isoformat") else str(r[0]),
-                    "symbol": r[1],
-                    "close_price": round(r[2], 2) if r[2] else 0.0,
-                    "volume_5m": round(r[3], 2) if r[3] else 0.0,
-                    "vwap": round(r[4], 2) if r[4] else 0.0,
-                    "net_trade": round(r[5], 2) if r[5] else 0.0,
-                    "spread": round(r[6], 4) if r[6] else 0.0,
-                    "mid_price": round(r[7], 2) if r[7] else 0.0,
-                    "bid_depth": round(r[8], 2) if r[8] else 0.0,
-                    "ask_depth": round(r[9], 2) if r[9] else 0.0,
-                    "imbalance": round(r[10], 3) if r[10] else 0.0,
-                    "sentiment_score": round(r[11], 3) if r[11] else 0.0,
-                    "tweet_count": int(r[12]) if r[12] else 0,
-                    "net_cex_flow_usd": round(r[13], 2) if r[13] else 0.0,
-                    "mse_score": round(r[14], 6) if r[14] else 0.0,
-                    "is_anomaly": bool(r[15]),
-                    "severity": r[16],
+                    "bucket": r["bucket"].isoformat() if hasattr(r["bucket"], "isoformat") else str(r["bucket"]),
+                    "symbol": r["symbol"],
+                    "close_price": round(float(r["close_price"]), 2) if r["close_price"] else 0.0,
+                    "volume_5m": round(float(r["volume_5m"]), 2) if r["volume_5m"] else 0.0,
+                    "vwap": round(float(r["vwap"]), 2) if r["vwap"] else 0.0,
+                    "net_trade": round(float(r["net_trade"]), 2) if r["net_trade"] else 0.0,
+                    "spread": round(float(r["spread"]), 4) if r["spread"] else 0.0,
+                    "mid_price": round(float(r["mid_price"]), 2) if r["mid_price"] else 0.0,
+                    "bid_depth": round(float(r["bid_depth"]), 2) if r["bid_depth"] else 0.0,
+                    "ask_depth": round(float(r["ask_depth"]), 2) if r["ask_depth"] else 0.0,
+                    "imbalance": round(float(r["imbalance"]), 3) if r["imbalance"] else 0.0,
+                    "sentiment_score": round(float(r["sentiment_score"]), 3) if r["sentiment_score"] else 0.0,
+                    "tweet_count": int(r["tweet_count"]) if r["tweet_count"] else 0,
+                    "net_cex_flow_usd": round(float(r["net_cex_flow_usd"]), 2) if r["net_cex_flow_usd"] else 0.0,
+                    "mse_score": round(float(r["mse_score"]), 6) if r["mse_score"] else 0.0,
+                    "is_anomaly": bool(r["is_anomaly"]),
+                    "severity": r["severity"],
                 }
             )
         return result
@@ -134,10 +158,10 @@ def get_latest_metrics() -> list[dict[str, Any]]:
 
 
 @app.get("/api/health-scores")
-def get_health_scores() -> list[dict[str, Any]]:
+async def get_health_scores() -> list[dict[str, Any]]:
     """Retrieve recent LLM qualitative ratings and reasoning blocks."""
     try:
-        rows = execute_query_fetch(SQL_GET_LATEST_HEALTH_SCORES)
+        rows = await execute_query_fetch_async(SQL_GET_LATEST_HEALTH_SCORES)
         result = []
         for r in rows:
             result.append(
@@ -159,10 +183,10 @@ def get_health_scores() -> list[dict[str, Any]]:
 
 
 @app.get("/api/anomalies")
-def get_active_anomalies() -> list[dict[str, Any]]:
+async def get_active_anomalies() -> list[dict[str, Any]]:
     """List historical anomaly alerts detected by the LSTM Autoencoder."""
     try:
-        rows = execute_query_fetch(SQL_GET_ACTIVE_ANOMALIES)
+        rows = await execute_query_fetch_async(SQL_GET_ACTIVE_ANOMALIES)
         result = []
         for r in rows:
             result.append(

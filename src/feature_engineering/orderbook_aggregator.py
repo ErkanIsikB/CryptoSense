@@ -122,7 +122,7 @@ class OrderbookAggregator(BaseTimeBucketAggregator):
                 self._buckets[key] = acc
             acc.add(bids, asks)
 
-        self._maybe_flush(event_time_ms)
+        self.maybe_flush(event_time_ms)
 
     def _should_flush(self, acc: OrderbookAccumulator) -> bool:
         return acc.count > 0

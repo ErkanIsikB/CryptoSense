@@ -9,6 +9,29 @@ from src.models.sentiment_models import (
 )
 
 class TestSentimentScorer(unittest.TestCase):
+    @staticmethod
+    def _calculate_macro_f1(true_labels: list[str], predictions: list[dict[str, float]]) -> float:
+        pred_labels = []
+        for probs in predictions:
+            pred_label = max(probs, key=probs.get)
+            pred_labels.append(pred_label)
+
+        classes = ["positive", "negative", "neutral"]
+        f1_scores = []
+
+        for cls in classes:
+            tp = sum(1 for t, p in zip(true_labels, pred_labels) if t == cls and p == cls)
+            fp = sum(1 for t, p in zip(true_labels, pred_labels) if t != cls and p == cls)
+            fn = sum(1 for t, p in zip(true_labels, pred_labels) if t == cls and p != cls)
+
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+
+            f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+            f1_scores.append(f1)
+
+        return sum(f1_scores) / len(classes)
+
     def test_compound_score(self):
         # Balanced neutral case
         self.assertAlmostEqual(compound_score({"positive": 0.1, "negative": 0.1, "neutral": 0.8}), 0.0)
@@ -112,26 +135,7 @@ class TestSentimentScorer(unittest.TestCase):
         if is_fallback:
             self.skipTest("FinBERT model is not loaded (transformers or device not available; fell back to neutral).")
             
-        pred_labels = []
-        for probs in predictions:
-            pred_label = max(probs, key=probs.get)
-            pred_labels.append(pred_label)
-            
-        classes = ["positive", "negative", "neutral"]
-        f1_scores = []
-        
-        for cls in classes:
-            tp = sum(1 for t, p in zip(true_labels, pred_labels) if t == cls and p == cls)
-            fp = sum(1 for t, p in zip(true_labels, pred_labels) if t != cls and p == cls)
-            fn = sum(1 for t, p in zip(true_labels, pred_labels) if t == cls and p != cls)
-            
-            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-            
-            f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-            f1_scores.append(f1)
-            
-        macro_f1 = sum(f1_scores) / len(classes)
+        macro_f1 = self._calculate_macro_f1(true_labels, predictions)
         print(f"\n🧪 FinBERT Macro F1 Score: {macro_f1:.4f}")
         
         self.assertGreaterEqual(macro_f1, 0.75, f"FinBERT F1 score {macro_f1:.4f} is below the 0.75 target threshold")
@@ -178,26 +182,7 @@ class TestSentimentScorer(unittest.TestCase):
         if is_fallback:
             self.skipTest("CryptoBERT model is not loaded (fell back to neutral).")
 
-        pred_labels = []
-        for probs in predictions:
-            pred_label = max(probs, key=probs.get)
-            pred_labels.append(pred_label)
-
-        classes = ["positive", "negative", "neutral"]
-        f1_scores = []
-
-        for cls in classes:
-            tp = sum(1 for t, p in zip(true_labels, pred_labels) if t == cls and p == cls)
-            fp = sum(1 for t, p in zip(true_labels, pred_labels) if t != cls and p == cls)
-            fn = sum(1 for t, p in zip(true_labels, pred_labels) if t == cls and p != cls)
-
-            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-
-            f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-            f1_scores.append(f1)
-
-        macro_f1 = sum(f1_scores) / len(classes)
+        macro_f1 = self._calculate_macro_f1(true_labels, predictions)
         print(f"\n🧪 CryptoBERT Macro F1 Score: {macro_f1:.4f}")
 
         self.assertGreaterEqual(macro_f1, 0.70, f"CryptoBERT F1 score {macro_f1:.4f} is below the 0.70 target threshold")

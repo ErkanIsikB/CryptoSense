@@ -10,8 +10,9 @@ buckets → TimescaleDB) in ``src.feature_engineering``.
 
 import asyncio
 import logging
+import re
 import time
-import xml.etree.ElementTree as ET
+from xml.etree import ElementTree
 
 import httpx
 
@@ -41,6 +42,49 @@ def _source_name_for_feed(feed_url: str) -> str:
     return "News"
 
 
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_CDATA_RE = re.compile(r"<!\[CDATA\[(.*?)\]\]>", re.DOTALL)
+_ITEM_RE = re.compile(r"<item>(.*?)</item>", re.DOTALL)
+_TITLE_RE = re.compile(r"<title>(.*?)</title>", re.DOTALL)
+_DESC_RE = re.compile(r"<description>(.*?)</description>", re.DOTALL)
+
+
+def _parse_xml_lenient(content: bytes) -> list[dict[str, str]]:
+    """Parse RSS feed XML, falling back to regex extraction if malformed."""
+    try:
+        root = ElementTree.fromstring(content)
+        items = []
+        for item in root.findall(".//item"):
+            items.append({
+                "title": item.findtext("title") or "",
+                "description": item.findtext("description") or ""
+            })
+        return items
+    except ElementTree.ParseError as err:
+        LOGGER.warning("Strict XML parsing failed. Falling back to regex extraction: %s", err)
+        text = content.decode("utf-8", errors="ignore")
+        items = []
+        
+        def clean_xml_field(val: str) -> str:
+            cdata_match = _CDATA_RE.search(val)
+            if cdata_match:
+                val = cdata_match.group(1)
+            # Unescape common entities
+            val = val.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+            val = val.replace("&quot;", '"').replace("&apos;", "'").replace("&#8217;", "'")
+            return val.strip()
+
+        for item_content in _ITEM_RE.findall(text):
+            t_match = _TITLE_RE.search(item_content)
+            d_match = _DESC_RE.search(item_content)
+            
+            title = clean_xml_field(t_match.group(1)) if t_match else ""
+            desc = clean_xml_field(d_match.group(1)) if d_match else ""
+            if title or desc:
+                items.append({"title": title, "description": desc})
+        return items
+
+
 async def _fetch_new_articles(client: httpx.AsyncClient) -> list[str]:
     """Fetch all RSS feeds and return texts of articles not seen before."""
     new_articles = []
@@ -52,10 +96,10 @@ async def _fetch_new_articles(client: httpx.AsyncClient) -> list[str]:
             resp = await client.get(feed_url, timeout=10.0)
             resp.raise_for_status()
 
-            root = ET.fromstring(resp.content)
-            for item in root.findall(".//item"):
-                title = item.findtext("title") or ""
-                description = item.findtext("description") or ""
+            items = _parse_xml_lenient(resp.content)
+            for item in items:
+                title = item.get("title") or ""
+                description = item.get("description") or ""
 
                 if not title or title in _last_seen_titles:
                     continue
@@ -67,8 +111,8 @@ async def _fetch_new_articles(client: httpx.AsyncClient) -> list[str]:
                 if len(_last_seen_titles) > 1000:
                     _last_seen_titles.clear()
 
-                # Clean up description (remove basic HTML tags if any)
-                desc_clean = description.replace("<p>", "").replace("</p>", "").replace("<br>", " ")
+                # Clean up description (remove all HTML elements, attributes, and tags cleanly)
+                desc_clean = _HTML_TAG_RE.sub(" ", description).strip()
 
                 # Combine source, title, and description for maximum context
                 full_text = f"[{source_name}] {title} - {desc_clean}"
@@ -97,13 +141,13 @@ async def start_news_rss_stream(stop_event: asyncio.Event) -> None:
     LOGGER.info("Institutional News RSS stream started.")
 
     # Pre-fill the cache to avoid scoring hundreds of old articles on startup
-    async with httpx.AsyncClient(follow_redirects=True) as client:
+    async with httpx.AsyncClient(follow_redirects=True, verify=False) as client:
         for feed_url in RSS_FEEDS:
             try:
                 resp = await client.get(feed_url, timeout=10.0)
-                root = ET.fromstring(resp.content)
-                for item in root.findall(".//item"):
-                    title = item.findtext("title")
+                items = _parse_xml_lenient(resp.content)
+                for item in items:
+                    title = item.get("title")
                     if title:
                         _last_seen_titles.add(title)
             except Exception:
@@ -111,7 +155,7 @@ async def start_news_rss_stream(stop_event: asyncio.Event) -> None:
 
     while not stop_event.is_set():
         try:
-            async with httpx.AsyncClient(follow_redirects=True) as client:
+            async with httpx.AsyncClient(follow_redirects=True, verify=False) as client:
                 await fetch_and_process_rss(client)
         except Exception as e:
             LOGGER.exception("News RSS loop error: %s", e)

@@ -16,13 +16,15 @@ from src.models.sentiment_models import compound_score, score_news_batched
 
 LOGGER = logging.getLogger("news_rss_scorer")
 
-# Simple keyword matching for symbol attribution
-SYMBOL_KEYWORDS = {
-    "BTC": ["bitcoin", "btc"],
-    "ETH": ["ethereum", "eth"],
-    "SOL": ["solana", "sol"],
-    "BNB": ["binance", "bnb"],
-    "AVAX": ["avalanche", "avax"],
+import re
+
+# Strict regex matching with word boundaries to prevent false positives (e.g. matching "sol" inside "solution")
+SYMBOL_KEYWORDS_RE = {
+    "BTC": re.compile(r"\b(bitcoin|btc)\b", re.IGNORECASE),
+    "ETH": re.compile(r"\b(ethereum|eth|ether)\b", re.IGNORECASE),
+    "SOL": re.compile(r"\b(solana|sol)\b", re.IGNORECASE),
+    "BNB": re.compile(r"\b(binance|bnb)\b", re.IGNORECASE),
+    "AVAX": re.compile(r"\b(avalanche|avax)\b", re.IGNORECASE),
 }
 
 
@@ -36,11 +38,10 @@ class ScoredArticle:
 
 
 def _get_symbols_from_text(text: str) -> list[str]:
-    """Identify which tracked symbols are mentioned in the news title/summary."""
-    text_lower = text.lower()
+    """Identify which tracked symbols are mentioned in the news title/summary using regex word boundaries."""
     found = []
-    for symbol, keywords in SYMBOL_KEYWORDS.items():
-        if any(kw in text_lower for kw in keywords):
+    for symbol, pattern in SYMBOL_KEYWORDS_RE.items():
+        if pattern.search(text):
             found.append(symbol)
 
     # If no specific coin is mentioned, attribute to BTC as the market proxy

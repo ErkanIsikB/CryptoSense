@@ -7,6 +7,9 @@ import logging
 import random
 import time
 from dataclasses import dataclass
+from typing import Any
+
+from src.core.utils.async_utils import run_pipeline_loop
 
 import requests
 
@@ -45,7 +48,7 @@ def _build_depth_rest_url() -> str:
     return f"{settings.BINANCE_REST_BASE.rstrip('/')}/api/v3/depth"
 
 
-def parse_depth_snapshot(symbol: str, payload: dict[str, object]) -> OrderbookEvent | None:
+def parse_depth_snapshot(symbol: str, payload: dict[str, Any]) -> OrderbookEvent | None:
     try:
         now_ms = int(time.time() * 1000)
         last_update_id = int(payload["lastUpdateId"])
@@ -173,29 +176,17 @@ async def start_orderbook_stream(stop: asyncio.Event, sink: BaseSink | None = No
     if sink is None:
         sink = JsonlFileSink(OUTPUT_DIR)
 
-    async def periodic_flusher() -> None:
-        while not stop.is_set():
-            try:
-                await asyncio.sleep(15.0)
-                now_ms = int(time.time() * 1000)
-                if sink is not None and hasattr(sink, "orderbook_aggregator"):
-                    # Passively flushes any stale buckets whose logical end times are in the past
-                    sink.orderbook_aggregator._maybe_flush(now_ms)
-            except Exception as e:
-                LOGGER.error("error in periodic orderbook flusher: %s", e)
+    flusher_coro = None
+    if sink is not None and hasattr(sink, "orderbook_aggregator"):
+        flusher_coro = sink.orderbook_aggregator.run_periodic_flusher(stop)
 
-    listener_task = asyncio.create_task(_listen_orderbook(symbols, queue, stop))
-    writer_task = asyncio.create_task(_write_orderbook(queue, stop, sink))
-    flusher_task = asyncio.create_task(periodic_flusher())
+    close_sink_coro = sink.close() if owns_sink else None
 
-    try:
-        await stop.wait()
-    finally:
-        listener_task.cancel()
-        flusher_task.cancel()
-        await asyncio.gather(listener_task, flusher_task, return_exceptions=True)
-        await queue.join()
-        writer_task.cancel()
-        await asyncio.gather(writer_task, return_exceptions=True)
-        if owns_sink:
-            await sink.close()
+    await run_pipeline_loop(
+        stop_event=stop,
+        queue=queue,
+        listener_coro=_listen_orderbook(symbols, queue, stop),
+        processor_coro=_write_orderbook(queue, stop, sink),
+        flusher_coro=flusher_coro,
+        close_sink_coro=close_sink_coro,
+    )

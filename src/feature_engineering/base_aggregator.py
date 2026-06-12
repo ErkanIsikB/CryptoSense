@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
-from typing import Any, Callable
+import time
+from typing import Any
+from concurrent.futures import ThreadPoolExecutor
 
 from src.db.db import execute_batch
+
+_db_write_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="db_agg_writer")
 
 class BaseTimeBucketAggregator:
     """Base class for thread-safe time-bucketed database aggregators."""
@@ -28,7 +33,7 @@ class BaseTimeBucketAggregator:
         """
         raise NotImplementedError("Subclasses must implement _should_flush")
 
-    def _maybe_flush(self, current_time_ms: int) -> None:
+    def maybe_flush(self, current_time_ms: int) -> None:
         """Flush stale buckets (strictly older than the current bucket)."""
         now_bucket = self._bucket_start(current_time_ms)
         to_flush: list[tuple[Any, ...]] = []
@@ -41,6 +46,16 @@ class BaseTimeBucketAggregator:
                     to_flush.append(acc.to_row())
 
         self._write(to_flush)
+
+    async def run_periodic_flusher(self, stop_event: asyncio.Event, interval_s: float = 15.0) -> None:
+        """Periodically flush stale buckets until stop_event is set."""
+        while not stop_event.is_set():
+            try:
+                await asyncio.sleep(interval_s)
+                now_ms = int(time.time() * 1000)
+                self.maybe_flush(now_ms)
+            except Exception:
+                self.logger.exception("error in periodic flusher for %s", self.entity_name)
 
     def flush_all(self) -> None:
         """Force-flush every open bucket (used at shutdown)."""
@@ -64,4 +79,4 @@ class BaseTimeBucketAggregator:
         if synchronous:
             run_in_background()
         else:
-            threading.Thread(target=run_in_background, daemon=True).start()
+            _db_write_executor.submit(run_in_background)

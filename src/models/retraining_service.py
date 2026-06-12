@@ -313,6 +313,11 @@ def fetch_and_clean_dataframe(
 
 def extract_continuous_sequences(df: pd.DataFrame) -> tuple[np.ndarray, dict[str, Any]]:
     """Segment sequences into uninterrupted 1-hour windows based on temporal proximity."""
+    # Apply dual-decay EWMA on sentiment columns before scaling & sequencing
+    df = df.copy()
+    df["avg_score"] = df["avg_score"].ewm(span=6, adjust=False).mean()
+    df["news_avg_score"] = df["news_avg_score"].ewm(span=24, adjust=False).mean()
+
     # Isolate feature arrays away from structural timestamps
     feature_columns = [col for col in df.columns if col != "bucket"]
 

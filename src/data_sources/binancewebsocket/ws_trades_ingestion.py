@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Deque
 
 import websockets
+from src.core.utils.async_utils import run_pipeline_loop
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from src.core.config import settings
@@ -193,29 +194,17 @@ async def start_trade_stream(stop: asyncio.Event, sink: BaseSink | None = None) 
     if sink is None:
         sink = JsonlFileSink(OUTPUT_DIR)
 
-    async def periodic_flusher() -> None:
-        while not stop.is_set():
-            try:
-                await asyncio.sleep(15.0)
-                now_ms = int(time.time() * 1000)
-                if sink is not None and hasattr(sink, "trade_aggregator"):
-                    # Passively flushes any stale buckets whose logical end times are in the past
-                    sink.trade_aggregator._maybe_flush(now_ms)
-            except Exception as e:
-                LOGGER.error("error in periodic trade flusher: %s", e)
+    flusher_coro = None
+    if sink is not None and hasattr(sink, "trade_aggregator"):
+        flusher_coro = sink.trade_aggregator.run_periodic_flusher(stop)
 
-    listener_task = asyncio.create_task(_listen(symbols, queue, stop))
-    aggregator_task = asyncio.create_task(_aggregator(queue, stop, sink))
-    flusher_task = asyncio.create_task(periodic_flusher())
+    close_sink_coro = sink.close() if owns_sink else None
 
-    try:
-        await stop.wait()
-    finally:
-        listener_task.cancel()
-        flusher_task.cancel()
-        await asyncio.gather(listener_task, flusher_task, return_exceptions=True)
-        await queue.join()
-        aggregator_task.cancel()
-        await asyncio.gather(aggregator_task, return_exceptions=True)
-        if owns_sink:
-            await sink.close()
+    await run_pipeline_loop(
+        stop_event=stop,
+        queue=queue,
+        listener_coro=_listen(symbols, queue, stop),
+        processor_coro=_aggregator(queue, stop, sink),
+        flusher_coro=flusher_coro,
+        close_sink_coro=close_sink_coro,
+    )

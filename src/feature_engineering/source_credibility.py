@@ -58,7 +58,7 @@ def normalize_twitter_handle(handle: Any) -> str | None:
     if not normalized:
         return None
 
-    if normalized.startswith("https://"):
+    if normalized.startswith("https://") or normalized.startswith("http://"):
         normalized = normalized.rstrip("/").split("/")[-1]
 
     normalized = normalized.lstrip("@").strip()

@@ -77,7 +77,8 @@ LIMIT %s;
 """
 
 async def fetch_and_scale_latest_window(target_symbol: str, scaler_params: dict) -> tuple[torch.Tensor | None, dict | None]:
-    rows = await execute_query_fetch_async(SQL_FETCH_LATEST, (target_symbol, SEQ_LEN))
+    # Fetch 48 rows (4 hours) to warm up the exponentially weighted moving averages
+    rows = await execute_query_fetch_async(SQL_FETCH_LATEST, (target_symbol, 48))
 
     if not rows or len(rows) < SEQ_LEN:
         LOGGER.warning(f"📭 Not enough history in DB for {target_symbol} yet. Need {SEQ_LEN} rows, got {len(rows) if rows else 0}. Skipping.")
@@ -86,6 +87,13 @@ async def fetch_and_scale_latest_window(target_symbol: str, scaler_params: dict)
     rows = rows[::-1]
     df = pd.DataFrame(rows, columns=SQL_COLUMNS)
     df["bucket"] = pd.to_datetime(df["bucket"], utc=True)
+
+    # Apply dual-decay EWMA: fast decay for tweets (span=6), slow decay for news (span=24)
+    df["avg_score"] = df["avg_score"].ewm(span=6, adjust=False).mean()
+    df["news_avg_score"] = df["news_avg_score"].ewm(span=24, adjust=False).mean()
+
+    # Slice to the latest 12 rows (1 hour) for inference
+    df = df.tail(SEQ_LEN).reset_index(drop=True)
 
     # Safely reorder columns to match scaler JSON feature mapping exactly
     df = df[["bucket"] + scaler_params["features"]]

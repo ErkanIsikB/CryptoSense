@@ -13,10 +13,10 @@ async def simulate_anomaly():
     print("==========================================================")
     print("🚨 CRYPTOSENSE V2.1: ANOMALY SIMULATION MODULE 🚨")
     print("==========================================================")
-    print("Senaryo: BTC için son 1 saatin verilerini veritabanından çekip,")
-    print("son muma (şu an) Trump'ın 'İran'a yaptırım' açıklaması kaynaklı")
-    print("devasa bir panik satış anomalisini enjekte edeceğiz.")
-    print("Ardından sistemi çalıştırıp LLM'in bu krizi nasıl yorumladığına bakacağız.\n")
+    print("Scenario: We will fetch the last 1 hour of data for BTC from the database,")
+    print("and inject a massive panic selling anomaly into the latest candle (now),")
+    print("caused by a hypothetical statement from Trump regarding 'sanctions on Iran'.")
+    print("Then we will run the system and observe how the LLM interprets this crisis.\n")
 
     symbol = "BTC"
     
@@ -30,7 +30,7 @@ async def simulate_anomaly():
     """
     rows = await execute_query_fetch_async(sql, (symbol,))
     if not rows or len(rows) < 11:
-        print("Yeterli veri yok. Simülasyon için veritabanında en az 11 kayıt olmalıdır.")
+        print("Not enough data. There must be at least 11 records in the database for the simulation.")
         return
 
     # Reverse rows to chronological
@@ -87,21 +87,21 @@ async def simulate_anomaly():
         "raw_payload": fake_payload
     }
 
-    print("📊 ADIM 1: Veri Paketi (Payload) Oluşturuldu.")
-    print("Enjekte Edilen Kriz Verileri:")
-    print(f" - Emir Defteri İhtilafı (Imbalance): {fake_payload['orderbook']['avg_imbalance']}")
-    print(f" - Duygu Puanı (Sentiment): {fake_payload['sentiment']['retail_avg_score']}")
-    print(f" - Borsalara Giren Para (On-Chain): ${fake_payload['on_chain']['net_cex_flow_usd']:,.2f}")
-    print(f" - PyTorch Anomali Kararı: {fake_macro_alert['is_anomaly']} (MSE: {fake_macro_alert['mse_score']})\n")
+    print("📊 STEP 1: Data Package (Payload) Created.")
+    print("Injected Crisis Data:")
+    print(f" - Orderbook Imbalance: {fake_payload['orderbook']['avg_imbalance']}")
+    print(f" - Sentiment Score: {fake_payload['sentiment']['retail_avg_score']}")
+    print(f" - Net CEX Inflow (On-Chain): ${fake_payload['on_chain']['net_cex_flow_usd']:,.2f}")
+    print(f" - PyTorch Anomaly Decision: {fake_macro_alert['is_anomaly']} (MSE: {fake_macro_alert['mse_score']})\n")
 
     # 3. Calculate Deterministic Score
     deterministic_score = calculate_deterministic_health_score(ctx)
-    print("🧠 ADIM 2: Kod Tarafından Deterministik Sağlık Skoru Hesaplanıyor...")
-    print(f"✅ HESAPLANAN SKOR: {deterministic_score} / 100\n")
+    print("🧠 STEP 2: Code is Calculating Deterministic Health Score...")
+    print(f"✅ CALCULATED SCORE: {deterministic_score} / 100\n")
     
     # 4. Ask Qwen to interpret the deterministic score
-    print("🤖 ADIM 3: Qwen 2.5 Büyük Dil Modeli Uyandırılıyor...")
-    print("LLM'den bu deterministik skoru finansal prensiplere göre açıklaması isteniyor...\n")
+    print("🤖 STEP 3: Qwen 2.5 Large Language Model is Waking Up...")
+    print("Requesting the LLM to interpret this deterministic score based on financial principles...\n")
     
     user_prompt = build_user_prompt(symbol, ctx, deterministic_score)
     
@@ -122,11 +122,11 @@ async def simulate_anomaly():
     latency = int((time.time() - start_time) * 1000)
 
     print("==========================================================")
-    print(f"🎯 LLM ÇIKTISI (Süre: {latency} ms)")
+    print(f"🎯 LLM OUTPUT (Duration: {latency} ms)")
     print("==========================================================")
-    print(f"Ana İtici Güç (Primary Driver): {parsed_result['primary_metric_driver']}")
-    print(f"Güvenilirlik Sınıfı (Trust): {parsed_result['trustworthiness_classification']}")
-    print(f"\n📝 Uzman Yönetici Yorumu:")
+    print(f"Primary Metric Driver: {parsed_result['primary_metric_driver']}")
+    print(f"Trustworthiness Classification: {parsed_result['trustworthiness_classification']}")
+    print(f"\n📝 Expert Portfolio Manager Commentary:")
     print(parsed_result['market_trajectory_summary'])
     print("==========================================================")
 

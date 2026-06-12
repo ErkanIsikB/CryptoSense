@@ -5,7 +5,7 @@ import time
 import httpx
 from src.core.config import settings
 from src.models.sentiment_models import is_english
-from src.data_sources.xquik.xquik_ingestion import _is_offtopic_news_tweet, KEYWORD_QUERIES
+from src.data_sources.xquik.xquik_ingestion import is_offtopic_news_tweet, KEYWORD_QUERIES
 
 logging.basicConfig(
     level=logging.INFO,
@@ -145,7 +145,7 @@ async def test_live_tweets():
                                     continue
                                 if not is_english(tweet_text):
                                     continue
-                                if symbol and _is_offtopic_news_tweet(symbol, tweet_text):
+                                if symbol and is_offtopic_news_tweet(symbol, tweet_text):
                                     LOGGER.info(f"      🚫 [Filtered Off-Topic] for {symbol}: {tweet_text[:80]}...")
                                     continue
                                 collected_tweets.append(tweet_text)

@@ -58,13 +58,21 @@ def get_pool() -> pg_pool.ThreadedConnectionPool:
 
 @contextmanager
 def get_connection() -> Iterator[Any]:
-    """Borrow a connection from the pool. Auto-returns on exit."""
+    """Borrow a connection from the pool. Discards broken connections dynamically."""
     p = get_pool()
     conn = p.getconn()
+    close_conn = False
     try:
         yield conn
+    except Exception:
+        if conn.closed or getattr(conn, "broken", False):
+            close_conn = True
+        raise
     finally:
-        p.putconn(conn)
+        try:
+            p.putconn(conn, close=close_conn)
+        except Exception:
+            LOGGER.exception("Failed returning connection to psycopg2 pool")
 
 
 def execute_query(
