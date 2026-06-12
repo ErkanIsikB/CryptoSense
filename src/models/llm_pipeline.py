@@ -106,7 +106,7 @@ def calculate_deterministic_health_score(ctx: dict[str, Any]) -> int:
             # Bearish anomaly (panic sell/dump): penalizes health score (scales up to 100% max magnitude)
             score += magnitude * direction_score
         
-    return int(max(0, min(100, score)))
+    return int(max(0.0, min(100.0, score)))
 
 
 # ── 2. Prompts Configuration ─────────────────────────────────────────
@@ -270,7 +270,7 @@ async def run_qwen_inference(symbol: str, ctx: dict[str, Any], health_score: int
         parsed_result = json.loads(raw_json)
     except Exception as exc:
         LOGGER.exception("Ollama inference or parsing failure: %s", exc)
-        parsed_result = {
+        parsed_result: dict[str, Any] = {
             "primary_metric_driver": "none",
             "market_trajectory_summary": f"Fallback error: Failed to parse Qwen JSON output. {exc}",
             "trustworthiness_classification": "LOW_TRUST_SPECULATIVE",

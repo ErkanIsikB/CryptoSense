@@ -77,7 +77,7 @@ if __name__ == "__main__":
             if r[5]:
                 try:
                     payload_dict = r[5] if isinstance(r[5], dict) else json.loads(r[5])
-                    print(f"     ↳ Verification Payload Extract: Close=${payload_dict['market_data']['close_price']} | Sentiment Avg Score={payload_dict['sentiment']['avg_score']}")
+                    print(f"     ↳ Verification Payload Extract: Close=${payload_dict['market_data']['close_price']} | Retail Sentiment Score={payload_dict['sentiment']['retail_avg_score']}")
                 except Exception as json_err:
                     print(f"     ↳ ❌ Error parsing JSONB column: {json_err}")
 

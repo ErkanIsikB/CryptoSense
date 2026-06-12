@@ -176,7 +176,7 @@ class SentimentAggregator:
                 self._buckets[key] = acc
             acc.add(score, tweet_text, engagement, source_weight, source_tier)
 
-        self._maybe_flush(tweet_time_s)
+        self.maybe_flush(tweet_time_s)
 
     def flush_all(self) -> None:
         """Force-flush all open buckets (shutdown)."""
@@ -211,7 +211,7 @@ class SentimentAggregator:
             self._buckets.clear()
         self._write(rows, synchronous=True)
 
-    def _maybe_flush(self, current_time_s: float) -> None:
+    def maybe_flush(self, current_time_s: float) -> None:
         now_bucket = _bucket_start(current_time_s)
         to_flush: list[tuple[Any, ...]] = []
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import random
-import time
 from datetime import datetime, timedelta, timezone
 import numpy as np
 import pandas as pd
@@ -27,8 +26,8 @@ HAS_DB = False
 try:
     from src.db.db import execute_query_fetch
     HAS_DB = True
-except Exception as e:
-    LOGGER.warning("Could not initialize database connection pool. Running in offline-only mode: %s", e)
+except Exception as db_exc:
+    LOGGER.warning("Could not initialize database connection pool. Running in offline-only mode: %s", db_exc)
 
 # ── 1. Page & Layout Configurations ─────────────────────────────────
 
@@ -861,7 +860,7 @@ def inject_next_candle():
     
     # Append a new candle to the end of the timeseries dataframe of all 5 tokens
     for token in ["BTC", "ETH", "SOL", "BNB", "AVAX"]:
-        df = st.session_state["demo_timeseries"][token]
+        df: pd.DataFrame = st.session_state["demo_timeseries"][token]
         last_row = df.iloc[-1]
         
         # Calculate next bucket timestamp
@@ -918,7 +917,7 @@ def inject_next_candle():
         
         # Convert dictionary to DataFrame and append it
         new_df = pd.DataFrame([new_row])
-        df_updated = pd.concat([df, new_df], ignore_index=True)
+        df_updated: pd.DataFrame = pd.concat([df, new_df], ignore_index=True)
         
         # Slice to keep only the latest 24 records to maintain Sparkline window size
         df_sliced = df_updated.iloc[-24:].reset_index(drop=True)
@@ -1047,19 +1046,7 @@ def create_glass_chart(df, y_column, line_color, value_title, value_format, toke
     return chart
 
 
-# Initialize session state for demo simulation cache if not present
-if "demo_timeseries" not in st.session_state:
-    st.session_state["demo_timeseries"] = {
-        token: generate_mock_timeseries(token) for token in ["BTC", "ETH", "SOL", "BNB", "AVAX"]
-    }
-if "demo_health_scores" not in st.session_state:
-    st.session_state["demo_health_scores"] = {
-        token: generate_mock_health_score(token) for token in ["BTC", "ETH", "SOL", "BNB", "AVAX"]
-    }
-if "fresh_anomaly_trigger" not in st.session_state:
-    st.session_state["fresh_anomaly_trigger"] = False
-if "fresh_anomaly_token" not in st.session_state:
-    st.session_state["fresh_anomaly_token"] = None
+
 
 # Initialize session state for anomaly seen tracker
 if "last_seen_anomaly_time" not in st.session_state:
@@ -1123,13 +1110,13 @@ FULL_NAMES = {
 }
 
 
-def get_pulse_indicator(is_anomaly: bool, health_score: int) -> str:
+def get_pulse_indicator(is_anomaly_val: bool, score_val: int) -> str:
     """Glowing pulse dot: green for high-conviction breakouts, red for critical threats, amber otherwise."""
-    if not is_anomaly:
+    if not is_anomaly_val:
         return ""
-    if health_score >= 80:
+    if score_val >= 80:
         return '<span class="indicator-pulse-green" title="Positive Breakout / Volatility Alert"></span>'
-    if health_score <= 40:
+    if score_val <= 40:
         return '<span class="indicator-pulse-red" title="Critical Structural Anomaly Warning"></span>'
     return '<span class="indicator-pulse-amber" title="Moderate Volatility Anomaly Warning"></span>'
 
@@ -1151,14 +1138,14 @@ def fmt_usd_signed(v: float) -> str:
     return f"{sign}${fmt_compact(abs(v))}"
 
 
-def score_css_class(health_score: int) -> str:
-    return "score-excellent" if health_score >= 70 else "score-warning" if health_score >= 40 else "score-critical"
+def score_css_class(score_val: int) -> str:
+    return "score-excellent" if score_val >= 70 else "score-warning" if score_val >= 40 else "score-critical"
 
 
 # ── 5a. Market Overview KPI Strip (all tokens at a glance) ──────────
 
 kpi_cols = st.columns(5)
-for i, tk in enumerate(TRACKED_TOKENS):
+for tk_idx, tk in enumerate(TRACKED_TOKENS):
     df_k, brief_k = preloaded_data[tk]
     last_k = df_k.iloc[-1]
     first_k = df_k.iloc[0]
@@ -1168,7 +1155,7 @@ for i, tk in enumerate(TRACKED_TOKENS):
     delta_cls = "kpi-delta-up" if delta_pct >= 0 else "kpi-delta-down"
     arrow = "▲" if delta_pct >= 0 else "▼"
 
-    with kpi_cols[i]:
+    with kpi_cols[tk_idx]:
         with st.container(border=True):
             st.markdown(
                 f"""
@@ -1189,16 +1176,16 @@ tab_objs = st.tabs([FULL_NAMES[t] for t in TRACKED_TOKENS])
 
 for tab, token in zip(tab_objs, TRACKED_TOKENS):
     with tab:
-        df, llm_brief = preloaded_data[token]
-        latest_row = df.iloc[-1]
-        is_anomaly = bool(latest_row["is_anomaly"])
+        token_df, token_brief = preloaded_data[token]
+        latest_row = token_df.iloc[-1]
+        token_is_anomaly = bool(latest_row["is_anomaly"])
         severity = str(latest_row["severity"])
-        health_score = llm_brief["health_score"] if llm_brief else 50
-        explanation = llm_brief["explanation"] if llm_brief else "No LLM analysis found."
-        reasoning = (llm_brief.get("reasoning") or "") if llm_brief else ""
-        pulse_indicator = get_pulse_indicator(is_anomaly, health_score)
+        token_health_score = token_brief["health_score"] if token_brief else 50
+        explanation = token_brief["explanation"] if token_brief else "No LLM analysis found."
+        reasoning = (token_brief.get("reasoning") or "") if token_brief else ""
+        pulse_indicator = get_pulse_indicator(token_is_anomaly, token_health_score)
 
-        delta_pct = ((latest_row["close_price"] / df.iloc[0]["close_price"]) - 1.0) * 100.0
+        delta_pct = ((latest_row["close_price"] / token_df.iloc[0]["close_price"]) - 1.0) * 100.0
         delta_cls = "kpi-delta-up" if delta_pct >= 0 else "kpi-delta-down"
         arrow = "▲" if delta_pct >= 0 else "▼"
         sev_cls = {"CRITICAL": "sev-critical", "HIGH": "sev-high"}.get(severity, "sev-normal")
@@ -1231,7 +1218,7 @@ for tab, token in zip(tab_objs, TRACKED_TOKENS):
                 st.markdown(
                     f"""
                     <div class="ai-card-title">🧠 AI &amp; LLM Analysis</div>
-                    <div class="ai-card-score {score_css_class(health_score)}">LLM Health Score: {health_score}/100</div>
+                    <div class="ai-card-score {score_css_class(token_health_score)}">LLM Health Score: {token_health_score}/100</div>
                     <div class="ai-reasoning">{reasoning}</div>
                     <p class="ai-card-explanation">{explanation}</p>
                     """,
@@ -1249,7 +1236,7 @@ for tab, token in zip(tab_objs, TRACKED_TOKENS):
                     unsafe_allow_html=True,
                 )
                 st.altair_chart(
-                    create_glass_chart(df, "close_price", "#22d3ee", "Price", "$,.2f", token, axis_format=",.0f"),
+                    create_glass_chart(token_df, "close_price", "#22d3ee", "Price", "$,.2f", token, axis_format=",.0f"),
                     width="stretch",
                 )
 
@@ -1261,7 +1248,7 @@ for tab, token in zip(tab_objs, TRACKED_TOKENS):
                     unsafe_allow_html=True,
                 )
                 st.altair_chart(
-                    create_glass_chart(df, "volume_5m", "#c084fc", "Volume (5m)", ",.0f", token, axis_format="~s"),
+                    create_glass_chart(token_df, "volume_5m", "#c084fc", "Volume (5m)", ",.0f", token, axis_format="~s"),
                     width="stretch",
                 )
 
@@ -1276,7 +1263,7 @@ for tab, token in zip(tab_objs, TRACKED_TOKENS):
                     unsafe_allow_html=True,
                 )
                 st.altair_chart(
-                    create_glass_chart(df, "net_cex_flow_usd", "#34d399", "CEX Net Flow", "$,.0f", token, axis_format="~s"),
+                    create_glass_chart(token_df, "net_cex_flow_usd", "#34d399", "CEX Net Flow", "$,.0f", token, axis_format="~s"),
                     width="stretch",
                 )
 
@@ -1288,7 +1275,7 @@ for tab, token in zip(tab_objs, TRACKED_TOKENS):
                     unsafe_allow_html=True,
                 )
                 st.altair_chart(
-                    create_glass_chart(df, "sentiment_score", "#fbbf24", "Sentiment Score", "+.2f", token, axis_format="+.2f"),
+                    create_glass_chart(token_df, "sentiment_score", "#fbbf24", "Sentiment Score", "+.2f", token, axis_format="+.2f"),
                     width="stretch",
                 )
 

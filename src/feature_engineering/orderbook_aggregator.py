@@ -14,13 +14,12 @@ a single row to ``orderbook_snapshots_5m``.
 from __future__ import annotations
 
 import logging
-import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from src.core.config import settings
-from src.db.db import execute_batch
+from src.feature_engineering.base_aggregator import BaseTimeBucketAggregator
 
 LOGGER = logging.getLogger("orderbook_aggregator")
 
@@ -95,17 +94,16 @@ ON CONFLICT (bucket, symbol) DO UPDATE SET
 """
 
 
-def _bucket_start(epoch_ms: int) -> float:
-    epoch_s = epoch_ms / 1000.0
-    return epoch_s - (epoch_s % WINDOW_S)
-
-
-class OrderbookAggregator:
+class OrderbookAggregator(BaseTimeBucketAggregator):
     """Thread-safe 5-minute orderbook metric aggregator."""
 
     def __init__(self) -> None:
-        self._buckets: dict[tuple[str, float], OrderbookAccumulator] = {}
-        self._lock = threading.Lock()
+        super().__init__(
+            window_s=WINDOW_S,
+            insert_sql=INSERT_SQL,
+            entity_name="orderbook snapshot(s)",
+            logger=LOGGER,
+        )
 
     def add(
         self,
@@ -114,7 +112,7 @@ class OrderbookAggregator:
         bids: list[list[str]],
         asks: list[list[str]],
     ) -> None:
-        bucket_ts = _bucket_start(event_time_ms)
+        bucket_ts = self._bucket_start(event_time_ms)
         key = (symbol, bucket_ts)
 
         with self._lock:
@@ -126,38 +124,5 @@ class OrderbookAggregator:
 
         self._maybe_flush(event_time_ms)
 
-    def flush_all(self) -> None:
-        with self._lock:
-            rows = [acc.to_row() for acc in self._buckets.values() if acc.count > 0]
-            self._buckets.clear()
-        self._write(rows, synchronous=True)
-
-    def _maybe_flush(self, current_time_ms: int) -> None:
-        now_bucket = _bucket_start(current_time_ms)
-        to_flush: list[tuple[Any, ...]] = []
-
-        with self._lock:
-            stale_keys = [k for k in self._buckets if k[1] < now_bucket]
-            for key in stale_keys:
-                acc = self._buckets.pop(key)
-                if acc.count > 0:
-                    to_flush.append(acc.to_row())
-
-        self._write(to_flush)
-
-    @staticmethod
-    def _write(rows: list[tuple[Any, ...]], synchronous: bool = False) -> None:
-        if not rows:
-            return
-
-        def run_in_background() -> None:
-            try:
-                execute_batch(INSERT_SQL, rows)
-                LOGGER.info("flushed %d orderbook snapshot(s) to DB", len(rows))
-            except Exception:
-                LOGGER.exception("failed to flush orderbook snapshots")
-
-        if synchronous:
-            run_in_background()
-        else:
-            threading.Thread(target=run_in_background, daemon=True).start()
+    def _should_flush(self, acc: OrderbookAccumulator) -> bool:
+        return acc.count > 0

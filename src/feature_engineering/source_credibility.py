@@ -1,6 +1,6 @@
 """Source credibility lookup and weighted sentiment helpers.
 
-The resolver is intentionally independent from the sentiment model. It maps
+The resolver is intentionally independent of the sentiment model. It maps
 known X/Twitter handles to moderate credibility weights and falls back to an
 included ``unknown`` tier so ordinary accounts are never dropped.
 """
@@ -58,7 +58,7 @@ def normalize_twitter_handle(handle: Any) -> str | None:
     if not normalized:
         return None
 
-    if normalized.startswith("https://") or normalized.startswith("http://"):
+    if normalized.startswith("https://"):
         normalized = normalized.rstrip("/").split("/")[-1]
 
     normalized = normalized.lstrip("@").strip()
@@ -81,7 +81,7 @@ def _configured_display_handle(handle: Any) -> str | None:
         return None
 
     raw = str(handle).strip()
-    if raw.startswith("https://") or raw.startswith("http://"):
+    if raw.startswith("https://"):
         return display_twitter_handle(raw)
     raw = raw if raw.startswith("@") else f"@{raw}"
     return raw

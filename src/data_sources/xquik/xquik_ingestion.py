@@ -241,6 +241,20 @@ async def ensure_keyword_monitors(client: httpx.AsyncClient) -> dict[str, str]:
 _last_seen_event_id: dict[str, str] = {}
 
 
+async def _fetch_events_page(
+    client: httpx.AsyncClient,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Helper to fetch a single page of events from the XQuik API."""
+    resp = await client.get(
+        f"{XQUIK_BASE}/events",
+        headers=_headers(),
+        params=params,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def _fast_forward_cursors(
     client: httpx.AsyncClient,
     symbol_monitors: dict[str, str],
@@ -248,13 +262,10 @@ async def _fast_forward_cursors(
     """Record the newest event ID for each monitor without processing anything."""
     for symbol, monitor_id in symbol_monitors.items():
         try:
-            resp = await client.get(
-                f"{XQUIK_BASE}/events",
-                headers=_headers(),
-                params={"keywordMonitorId": monitor_id, "limit": 1},
+            data = await _fetch_events_page(
+                client,
+                {"keywordMonitorId": monitor_id, "limit": 1},
             )
-            resp.raise_for_status()
-            data = resp.json()
             events = data.get("events", [])
             if events:
                 newest_id = str(events[0].get("id", ""))
@@ -285,42 +296,10 @@ async def _poll_events(
     }
 
     try:
-        resp = await client.get(
-            f"{XQUIK_BASE}/events",
-            headers=_headers(),
-            params=params,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        events = data.get("events", [])
-
-        for evt in events:
-            evt_id = str(evt.get("id", ""))
-            if evt_id == last_seen:
-                found_seen = True
-                break
-            new_events.append(evt)
-
-        LOGGER.info(
-            "polled %s: %d new events from %d fetched (hitSeen=%s, hasMore=%s)",
-            symbol, len(new_events), len(events), found_seen, data.get("hasMore"),
-        )
-
         page = 0
-        max_pages = 5
-        while not found_seen and data.get("hasMore") and page < max_pages:
-            next_cursor = data.get("nextCursor")
-            if not next_cursor:
-                break
-            params["after"] = next_cursor
-            resp = await client.get(
-                f"{XQUIK_BASE}/events",
-                headers=_headers(),
-                params=params,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        max_pages = 6  # Page 0 (initial) + up to 5 additional pages
+        while page < max_pages:
+            data = await _fetch_events_page(client, params)
             events = data.get("events", [])
 
             for evt in events:
@@ -330,10 +309,24 @@ async def _poll_events(
                     break
                 new_events.append(evt)
 
-            LOGGER.info(
-                "polled %s (page %d): +%d events (hitSeen=%s)",
-                symbol, page + 1, len(events), found_seen,
-            )
+            if page == 0:
+                LOGGER.info(
+                    "polled %s: %d new events from %d fetched (hitSeen=%s, hasMore=%s)",
+                    symbol, len(new_events), len(events), found_seen, data.get("hasMore"),
+                )
+            else:
+                LOGGER.info(
+                    "polled %s (page %d): +%d events (hitSeen=%s)",
+                    symbol, page, len(events), found_seen,
+                )
+
+            if found_seen or not data.get("hasMore"):
+                break
+
+            next_cursor = data.get("nextCursor")
+            if not next_cursor:
+                break
+            params["after"] = next_cursor
             page += 1
 
         if new_events:
@@ -518,7 +511,7 @@ async def start_xquik_sentiment_stream(stop: asyncio.Event) -> None:
                     await asyncio.sleep(15.0)
                     now_s = time.time()
                     # Passively flushes any stale buckets whose logical end times are in the past
-                    aggregator._maybe_flush(now_s)
+                    aggregator.maybe_flush(now_s)
                 except Exception as e:
                     LOGGER.error("error in periodic sentiment flusher: %s", e)
 

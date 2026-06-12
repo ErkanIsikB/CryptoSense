@@ -121,7 +121,7 @@ _NEUTRAL_FALLBACK = {"positive": 0.0, "negative": 0.0, "neutral": 1.0}
 
 
 def _score_batched(texts: list[str], pipe, normalise_fn=None) -> list[dict[str, float]]:
-    """Score a batch of texts through a HF pipeline with optional label normalisation."""
+    """Score a batch of texts through an HF pipeline with optional label normalisation."""
     if pipe is None or not texts:
         return [_NEUTRAL_FALLBACK.copy() for _ in texts]
 

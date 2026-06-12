@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ── 1. Ingestion Pipeline, LSTM Anomaly, and LLM briefing Stream ──
   ingestion-pipeline:

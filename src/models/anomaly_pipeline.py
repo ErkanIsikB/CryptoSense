@@ -98,9 +98,32 @@ async def fetch_and_scale_latest_window(target_symbol: str, scaler_params: dict)
     latest_data_dict = df.iloc[-1].to_dict()
 
     df_scaled = df.copy()
+    
+    # Identify price-based features that are non-stationary
+    price_features = {"open", "high", "low", "close", "vwap", "avg_mid_price"}
+    
+    # Calculate shift needed to center the price scale on current price level
+    current_price = df["close"].iloc[-1]
+    old_close_min = scaler_params["mins"].get("close", current_price)
+    old_close_max = scaler_params["maxs"].get("close", current_price)
+    old_close_mid = (old_close_max + old_close_min) / 2.0
+    price_shift = current_price - old_close_mid
+    
+    if abs(price_shift) > 0.01:
+        LOGGER.info(
+            f"🔄 [Auto-Scaler Shift] {target_symbol} price baseline shifted by {price_shift:+.2f} "
+            f"(Current close: {current_price:.2f} vs Model training midpoint: {old_close_mid:.2f})"
+        )
+
     for col in scaler_params["features"]:
         min_v = scaler_params["mins"][col]
         max_v = scaler_params["maxs"][col]
+        
+        # Shift the scale boundaries dynamically for price features
+        if col in price_features:
+            min_v += price_shift
+            max_v += price_shift
+            
         range_v = max_v - min_v if (max_v - min_v) != 0 else 1.0
         df_scaled[col] = (df[col] - min_v) / range_v
 
