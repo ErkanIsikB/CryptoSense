@@ -271,27 +271,42 @@ st.markdown(
                 inset 0 1px 0 0 rgba(255, 255, 255, 0.22) !important;
         }
 
-        /* ── Perfect Alignment styling override for Header containers containing .header-marker ── */
-        div[data-testid="stVerticalBlockBorderDiv"]:has(.header-marker) {
-            background: rgba(255, 255, 255, 0.025) !important;
-            background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, transparent 100%) !important;
-            border: 1px solid rgba(255, 255, 255, 0.08) !important;
-            border-radius: 12px !important;
-            padding: 4px 10px !important; /* Shrunk vertical padding to compress box height */
-            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28) !important;
-            transform: none !important;
-            transition: none !important;
-            min-height: auto !important; /* Forces layout to collapse tightly */
+        /* ── Glass pill Tab navigation ── */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 10px;
+            background: transparent !important;
+            border-bottom: none !important;
+            padding: 6px 0 16px 0;
         }
-
-        div[data-testid="stVerticalBlockBorderDiv"]:has(.header-marker)::before {
-            display: none;
+        .stTabs [data-baseweb="tab"] {
+            font-family: 'Space Grotesk', sans-serif !important;
+            font-weight: 600 !important;
+            letter-spacing: 0.5px;
+            color: #9fb0c8 !important;
+            background: rgba(255, 255, 255, 0.04) !important;
+            border: 1px solid rgba(255, 255, 255, 0.09) !important;
+            border-radius: 999px !important;
+            padding: 10px 24px !important;
+            backdrop-filter: blur(12px);
+            transition: all 0.25s ease;
         }
-
-        div[data-testid="stVerticalBlockBorderDiv"]:has(.header-marker):hover {
-            border-color: rgba(255, 255, 255, 0.08) !important;
-            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28) !important;
-            transform: none !important;
+        .stTabs [data-baseweb="tab"] p {
+            font-size: 15px !important;
+            font-family: 'Space Grotesk', sans-serif !important;
+        }
+        .stTabs [data-baseweb="tab"]:hover {
+            color: #e7ecf5 !important;
+            border-color: rgba(255, 255, 255, 0.22) !important;
+        }
+        .stTabs [aria-selected="true"] {
+            color: #38e8ff !important;
+            background: rgba(56, 232, 255, 0.10) !important;
+            border-color: rgba(56, 232, 255, 0.45) !important;
+            box-shadow: 0 0 20px -6px rgba(56, 232, 255, 0.6);
+        }
+        .stTabs [aria-selected="true"] p { color: #38e8ff !important; }
+        .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {
+            display: none !important;
         }
 
         /* ── Hide 'Show data' and Grid Table view buttons inside elements toolbar ── */
@@ -304,44 +319,120 @@ st.markdown(
             background-color: transparent !important;
         }
 
-        /* ── Column Headers Visual styling ── */
-        .col-header-box {
-            text-align: center;
+        /* ── KPI Overview Cards ── */
+        .kpi-token {
             font-family: 'Space Grotesk', sans-serif;
+            font-size: 13px;
             font-weight: 700;
+            letter-spacing: 2.5px;
             text-transform: uppercase;
-            font-size: 15px;
-            letter-spacing: 3px;
-            margin: 0 !important;
-            padding: 0 !important;
-            line-height: 1.2 !important; /* Tight line height for ultra-compact layout */
-            text-shadow: 0 0 14px rgba(255, 255, 255, 0.18); /* soft clean premium glow */
+            color: #9fb0c8;
+            display: flex;
+            align-items: center;
+        }
+        .kpi-price {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: clamp(17px, 1.8vw, 27px); /* Scales down on narrow viewports instead of wrapping */
+            font-weight: 700;
+            color: #ffffff;
+            margin: 6px 0 3px 0;
+            line-height: 1.1;
+            white-space: nowrap;
+        }
+        .kpi-delta-up { color: #4ade80; font-size: 13.5px; font-weight: 600; margin-bottom: 10px; }
+        .kpi-delta-down { color: #f87171; font-size: 13.5px; font-weight: 600; margin-bottom: 10px; }
+
+        /* ── Detail Snapshot Card ── */
+        .snap-token {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 20px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .snap-price {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 42px;
+            font-weight: 700;
+            color: #ffffff;
+            line-height: 1.05;
+            margin-bottom: 4px;
+        }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px 20px;
+            margin: 18px 0 16px 0;
+        }
+        .stat-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #8fa0b5;
+            margin-bottom: 3px;
+        }
+        .stat-value {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 18px;
+            font-weight: 600;
+            color: #e7ecf5;
         }
 
-        .header-volume { color: #d8b4fe; }
-        .header-price { color: #a5f3fc; }
-        .header-inflow { color: #a7f3d0; }
-        .header-sentiment { color: #fde68a; }
-        .header-ai { color: #c7d2fe; }
+        /* ── Severity chips ── */
+        .sev-chip {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            padding: 5px 14px;
+            border-radius: 999px;
+            display: inline-block;
+        }
+        .sev-normal { background: rgba(148, 163, 184, 0.12); border: 1px solid rgba(148, 163, 184, 0.4); color: #cbd5e1; }
+        .sev-high { background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(251, 191, 36, 0.55); color: #fbbf24; box-shadow: 0 0 16px -4px rgba(245, 158, 11, 0.5); }
+        .sev-critical { background: rgba(239, 68, 68, 0.14); border: 1px solid rgba(248, 113, 113, 0.55); color: #f87171; box-shadow: 0 0 16px -4px rgba(239, 68, 68, 0.5); }
+
+        /* ── Chart Cards ── */
+        .chart-card-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 8px;
+        }
+        .chart-title {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 12.5px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 2.5px;
+        }
+        .chart-value {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 21px;
+            font-weight: 700;
+            color: #ffffff;
+        }
 
         /* ── AI Analysis Card Components ── */
         .ai-card-title {
             font-family: 'Space Grotesk', sans-serif;
-            font-size: 16px;
+            font-size: 20px;
             font-weight: 700;
             letter-spacing: 0.3px;
-            margin-bottom: 10px;
+            margin-bottom: 12px;
             display: flex;
             align-items: center;
         }
 
         .ai-card-score {
             font-family: 'Space Grotesk', sans-serif;
-            font-size: 13px;
+            font-size: 14px;
             font-weight: 700;
             letter-spacing: 0.5px;
-            margin-bottom: 12px;
-            padding: 5px 12px;
+            margin-bottom: 14px;
+            padding: 6px 16px;
             border-radius: 999px; /* Pill badge */
             display: inline-block;
             backdrop-filter: blur(6px);
@@ -351,10 +442,19 @@ st.markdown(
         .score-warning { background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(251, 191, 36, 0.55); color: #fbbf24; box-shadow: 0 0 16px -4px rgba(245, 158, 11, 0.5); }
         .score-critical { background: rgba(239, 68, 68, 0.14); border: 1px solid rgba(248, 113, 113, 0.55); color: #f87171; box-shadow: 0 0 16px -4px rgba(239, 68, 68, 0.5); }
 
-        .ai-card-explanation {
+        .ai-reasoning {
             font-size: 12.5px;
-            line-height: 1.6;
-            color: #c2ccdb;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            color: #8fa0b5;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+
+        .ai-card-explanation {
+            font-size: 15px;
+            line-height: 1.75;
+            color: #d3dbe8;
             margin-bottom: 0px;
         }
         
@@ -697,12 +797,30 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
+# ── Standalone UI Test Mode ─────────────────────────────────────────
+# Force demo (mock-data) mode without any DB / ingestion / model backends by setting
+# the env var CRYPTOSENSE_DEMO=1  OR  appending  ?demo=1  to the dashboard URL.
+# This lets you preview the full UI in isolation, even when a live DB is reachable.
+import os
+
+def _demo_forced() -> bool:
+    if str(os.getenv("CRYPTOSENSE_DEMO", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    try:
+        qp = st.query_params.get("demo", "")
+        return str(qp).strip().lower() in {"1", "true", "yes", "on"}
+    except Exception:
+        return False
+
+FORCE_DEMO = _demo_forced()
+
 # Sidebar Toggle for Offline Demo Mode
 st.sidebar.markdown("### 🛠️ UI Mode Settings")
 demo_mode = st.sidebar.toggle(
     "Enable Demo Offline Mode",
-    value=(not HAS_DB),  # Auto-default to True if database pool isn't loaded!
-    help="Enable this to preview the dashboard visuals and glowing AI alerts with high-fidelity simulated data without querying any database or backend APIs.",
+    value=(FORCE_DEMO or not HAS_DB),  # Forced via env/query param, or auto if no DB pool
+    disabled=FORCE_DEMO,  # Lock the toggle on when test mode is explicitly requested
+    help="Enable this to preview the dashboard visuals and glowing AI alerts with high-fidelity simulated data without querying any database or backend APIs. Tip: launch with CRYPTOSENSE_DEMO=1 or add ?demo=1 to the URL to force this on.",
 )
 
 # Sidebar System Health Metadata
@@ -841,90 +959,91 @@ with title_cols[1]:
             st.rerun()
 
 
-# Generate Column Headers
-head_cols = st.columns([1, 1, 1, 1, 1.8])
-
-with head_cols[0]:
-    with st.container(border=True):
-        st.markdown('<span class="header-marker"></span><div class="col-header-box header-volume">Volume</div>', unsafe_allow_html=True)
-with head_cols[1]:
-    with st.container(border=True):
-        st.markdown('<span class="header-marker"></span><div class="col-header-box header-price">Price</div>', unsafe_allow_html=True)
-with head_cols[2]:
-    with st.container(border=True):
-        st.markdown('<span class="header-marker"></span><div class="col-header-box header-inflow">Net Inflow</div>', unsafe_allow_html=True)
-with head_cols[3]:
-    with st.container(border=True):
-        st.markdown('<span class="header-marker"></span><div class="col-header-box header-sentiment">Sentiment</div>', unsafe_allow_html=True)
-with head_cols[4]:
-    with st.container(border=True):
-        st.markdown('<span class="header-marker"></span><div class="col-header-box header-ai">AI Analysis</div>', unsafe_allow_html=True)
-
-
-def create_premium_sparkline(df_reset, y_column, line_color, value_title, value_format, token):
-    # Selection point tracking the nearest X coordinate strictly based on X horizontal distance
-    # With a completely unique selection name mapping strictly per sparkline to resolve Vega deduplication warnings!
-    # With clear="mouseout" to ensure the hover dot is killed instantly when cursor leaves
+def create_glass_chart(df, y_column, line_color, value_title, value_format, token, height=270, axis_format=None):
+    """Large-format glass chart: gradient area fill + smooth line + snapping hover dot on a real time axis."""
+    # Unique selection name per token+metric to avoid Vega deduplication warnings;
+    # clear="mouseout" kills the hover dot instantly when the cursor leaves.
     hover_selection = alt.selection_point(
         name=f"hover_{token.lower()}_{y_column}",
         on="mouseover",
         nearest=True,
-        fields=["index"],
+        fields=["bucket"],
         encodings=["x"],  # Ignores Y-axis height and tracks strictly along the timeline!
         clear="mouseout",
-        empty=False
+        empty=False,
     )
-    
-    # 1. Base Line Chart
-    line = alt.Chart(df_reset).mark_line(
-        color=line_color, strokeWidth=2.5, interpolate="monotone"
-    ).encode(
-        x=alt.X("index:Q", axis=alt.Axis(
-            title=None, 
-            labels=True, 
-            ticks=False, 
-            grid=False,
-            labelPadding=0,
-            labelFontSize=9,
-            labelColor="#8fa0b5"
-        )),
-        y=alt.Y(f"{y_column}:Q", scale=alt.Scale(zero=False), axis=alt.Axis(
+
+    y_axis_kwargs = dict(
+        title=None,
+        grid=True,
+        gridColor="rgba(255, 255, 255, 0.06)",
+        ticks=False,
+        domain=False,
+        labelColor="#94a3b8",
+        labelFontSize=12,
+        labelPadding=8,
+    )
+    if axis_format:
+        y_axis_kwargs["format"] = axis_format
+
+    # Explicit padded Y domain computed from the data — Streamlit's Vega theme
+    # otherwise forces the scale to include zero, flattening tight price ranges.
+    y_lo = float(df[y_column].min())
+    y_hi = float(df[y_column].max())
+    y_pad = (y_hi - y_lo) * 0.10 or max(abs(y_hi), 1.0) * 0.01
+    y_scale = alt.Scale(domain=[y_lo - y_pad, y_hi + y_pad], nice=False, zero=False)
+
+    base = alt.Chart(df).encode(
+        x=alt.X("bucket:T", axis=alt.Axis(
             title=None,
-            labels=True,
+            format="%H:%M",
+            grid=False,
             ticks=False,
-            grid=True,
-            gridColor="rgba(255, 255, 255, 0.03)",
-            labelColor="#8fa0b5",
-            labelFontSize=9,
-            labelPadding=4
-        ))
+            domain=False,
+            labelColor="#94a3b8",
+            labelFontSize=12,
+            labelPadding=8,
+            tickCount=6,
+        )),
+        y=alt.Y(f"{y_column}:Q", scale=y_scale, axis=alt.Axis(**y_axis_kwargs)),
     )
-    
-    # 2. Glowing hover dot that snaps exactly on the line based on horizontal mouse position
-    # This also acts as the transparent hover grabber and carries the value-only tooltip.
-    points = alt.Chart(df_reset).mark_point(
-        color=line_color, size=65, filled=True, stroke="white", strokeWidth=1.5
+
+    # 1. Soft vertical gradient fill under the curve for depth.
+    # The area's natural zero baseline falls outside the explicit Y domain for
+    # high-value series (e.g. BTC price), so clip it to the plot frame.
+    area = base.mark_area(
+        interpolate="monotone",
+        opacity=0.16,
+        clip=True,
+        color=alt.Gradient(
+            gradient="linear",
+            stops=[
+                alt.GradientStop(color="rgba(0, 0, 0, 0)", offset=0),
+                alt.GradientStop(color=line_color, offset=1),
+            ],
+            x1=1, x2=1, y1=1, y2=0,
+        ),
+    )
+
+    # 2. Main smooth line
+    line = base.mark_line(color=line_color, strokeWidth=3, interpolate="monotone")
+
+    # 3. Glowing hover dot that snaps onto the line based on horizontal mouse position
+    points = base.mark_point(
+        color=line_color, size=90, filled=True, stroke="white", strokeWidth=1.5
     ).encode(
-        x="index:Q",
-        y=f"{y_column}:Q",
         opacity=alt.condition(hover_selection, alt.value(1), alt.value(0)),
         tooltip=[
-            alt.Tooltip(f"{y_column}:Q", title=value_title, format=value_format)
-        ]
-    ).add_params(
-        hover_selection
-    )
-    
-    # Combine layers together into a super fast 2-layer compiled plot
-    chart = alt.layer(
-        line, points
-    ).properties(
-        height=140,
-        usermeta={"embedOptions": {"actions": False}}
-    ).configure_view(
-        strokeWidth=0
-    )
-    
+            alt.Tooltip("bucket:T", title="Time", format="%H:%M"),
+            alt.Tooltip(f"{y_column}:Q", title=value_title, format=value_format),
+        ],
+    ).add_params(hover_selection)
+
+    chart = alt.layer(area, line, points).properties(
+        height=height,
+        usermeta={"embedOptions": {"actions": False}},
+    ).configure_view(strokeWidth=0).configure(background="transparent")
+
     return chart
 
 
@@ -1003,77 +1122,175 @@ FULL_NAMES = {
     "AVAX": "Avalanche (AVAX)",
 }
 
-for token in TRACKED_TOKENS:
-    # 1. Retrieve Preloaded Data
-    df, llm_brief = preloaded_data[token]
-    latest_row = df.iloc[-1]
-    is_anomaly = latest_row["is_anomaly"]
-    severity = latest_row["severity"]
-    health_score = llm_brief["health_score"] if llm_brief else 50
-    explanation = llm_brief["explanation"] if llm_brief else "No LLM analysis found."
 
-    # 🚨 SMART UX PULSE INDICATOR SYSTEM:
-    # Glow emerald green for high-conviction positive breakouts (>= 80),
-    # neon amber for moderate/warning anomalies (between 41 and 79),
-    # and pulsing red for critical threats (<= 40).
-    if is_anomaly:
-        if health_score >= 80:
-            pulse_indicator = '<span class="indicator-pulse-green" title="Positive Breakout / Volatility Alert"></span>'
-        elif health_score <= 40:
-            pulse_indicator = '<span class="indicator-pulse-red" title="Critical Structural Anomaly Warning"></span>'
-        else:
-            pulse_indicator = '<span class="indicator-pulse-amber" title="Moderate Volatility Anomaly Warning"></span>'
-    else:
-        pulse_indicator = ""
+def get_pulse_indicator(is_anomaly: bool, health_score: int) -> str:
+    """Glowing pulse dot: green for high-conviction breakouts, red for critical threats, amber otherwise."""
+    if not is_anomaly:
+        return ""
+    if health_score >= 80:
+        return '<span class="indicator-pulse-green" title="Positive Breakout / Volatility Alert"></span>'
+    if health_score <= 40:
+        return '<span class="indicator-pulse-red" title="Critical Structural Anomaly Warning"></span>'
+    return '<span class="indicator-pulse-amber" title="Moderate Volatility Anomaly Warning"></span>'
 
-    # Reset dataframe index to map cleanly as sequential sparkline coordinates
-    df_reset = df.reset_index()
 
-    # Render row columns
-    row_cols = st.columns([1, 1, 1, 1, 1.8])
+def fmt_compact(v: float) -> str:
+    """Human-compact number: 12.4K / 3.10M / 1.25B."""
+    a = abs(v)
+    if a >= 1e9:
+        return f"{v / 1e9:.2f}B"
+    if a >= 1e6:
+        return f"{v / 1e6:.2f}M"
+    if a >= 1e3:
+        return f"{v / 1e3:.1f}K"
+    return f"{v:,.0f}"
 
-    # 📈 Column 1: Volume Sparkline (Altair-Optimized, Snapping Hover dot, Auto-scale Y, faint gridlines)
-    with row_cols[0]:
+
+def fmt_usd_signed(v: float) -> str:
+    sign = "-" if v < 0 else "+"
+    return f"{sign}${fmt_compact(abs(v))}"
+
+
+def score_css_class(health_score: int) -> str:
+    return "score-excellent" if health_score >= 70 else "score-warning" if health_score >= 40 else "score-critical"
+
+
+# ── 5a. Market Overview KPI Strip (all tokens at a glance) ──────────
+
+kpi_cols = st.columns(5)
+for i, tk in enumerate(TRACKED_TOKENS):
+    df_k, brief_k = preloaded_data[tk]
+    last_k = df_k.iloc[-1]
+    first_k = df_k.iloc[0]
+    delta_pct = ((last_k["close_price"] / first_k["close_price"]) - 1.0) * 100.0
+    score_k = brief_k["health_score"] if brief_k else 50
+    pulse_k = get_pulse_indicator(bool(last_k["is_anomaly"]), score_k)
+    delta_cls = "kpi-delta-up" if delta_pct >= 0 else "kpi-delta-down"
+    arrow = "▲" if delta_pct >= 0 else "▼"
+
+    with kpi_cols[i]:
         with st.container(border=True):
-            st.markdown(f"<div style='font-size: 11.5px; font-weight: 800; text-transform: uppercase; color: #d8b4fe; margin-bottom: 2px;'>{token} Vol</div>", unsafe_allow_html=True)
-            vol_chart = create_premium_sparkline(df_reset, "volume_5m", "#c084fc", "Volume (5m)", ",.0f", token)
-            st.altair_chart(vol_chart, width="stretch")
-
-    # 📈 Column 2: Price Sparkline (Altair-Optimized, Snapping Hover dot, Auto-scale Y, faint gridlines)
-    with row_cols[1]:
-        with st.container(border=True):
-            st.markdown(f"<div style='font-size: 11.5px; font-weight: 800; text-transform: uppercase; color: #a5f3fc; margin-bottom: 2px;'>{token} Price: ${latest_row['close_price']:,.2f}</div>", unsafe_allow_html=True)
-            price_chart = create_premium_sparkline(df_reset, "close_price", "#22d3ee", "Price", "$,.2f", token)
-            st.altair_chart(price_chart, width="stretch")
-
-    # 📈 Column 3: Net Inflow Sparkline (Altair-Optimized, Snapping Hover dot, Auto-scale Y, faint gridlines)
-    with row_cols[2]:
-        with st.container(border=True):
-            st.markdown(f"<div style='font-size: 11.5px; font-weight: 800; text-transform: uppercase; color: #a7f3d0; margin-bottom: 2px;'>{token} CEX: ${latest_row['net_cex_flow_usd']:+,.0f}</div>", unsafe_allow_html=True)
-            flow_chart = create_premium_sparkline(df_reset, "net_cex_flow_usd", "#34d399", "CEX Net Flow", "$,.0f", token)
-            st.altair_chart(flow_chart, width="stretch")
-
-    # 📈 Column 4: Sentiment Sparkline (Altair-Optimized, Snapping Hover dot, Auto-scale Y, faint gridlines)
-    with row_cols[3]:
-        with st.container(border=True):
-            st.markdown(f"<div style='font-size: 11.5px; font-weight: 800; text-transform: uppercase; color: #fde68a; margin-bottom: 2px;'>{token} Sent: {latest_row['sentiment_score']:+.2f}</div>", unsafe_allow_html=True)
-            sent_chart = create_premium_sparkline(df_reset, "sentiment_score", "#fbbf24", "Sentiment Score", "+.2f", token)
-            st.altair_chart(sent_chart, width="stretch")
-
-    # 🧠 Column 5: AI & LLM Analysis Card
-    with row_cols[4]:
-        with st.container(border=True):
-            # Determine color-coded severity class
-            score_class = "score-excellent" if health_score >= 70 else "score-warning" if health_score >= 40 else "score-critical"
-
             st.markdown(
                 f"""
-                <div class="ai-card-title">{pulse_indicator}{FULL_NAMES[token]}</div>
-                <div class="ai-card-score {score_class}">LLM Score: {health_score}/100</div>
-                <p class="ai-card-explanation">"{explanation}"</p>
+                <div class="kpi-token">{pulse_k}{tk}</div>
+                <div class="kpi-price">${last_k['close_price']:,.2f}</div>
+                <div class="{delta_cls}">{arrow} {delta_pct:+.2f}% / 2h</div>
+                <div class="ai-card-score {score_css_class(score_k)}" style="margin-bottom: 0;">AI {score_k}/100</div>
                 """,
                 unsafe_allow_html=True,
             )
+
+st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+
+
+# ── 5b. Per-Token Deep-Dive Tabs (large charts + full AI briefing) ──
+
+tab_objs = st.tabs([FULL_NAMES[t] for t in TRACKED_TOKENS])
+
+for tab, token in zip(tab_objs, TRACKED_TOKENS):
+    with tab:
+        df, llm_brief = preloaded_data[token]
+        latest_row = df.iloc[-1]
+        is_anomaly = bool(latest_row["is_anomaly"])
+        severity = str(latest_row["severity"])
+        health_score = llm_brief["health_score"] if llm_brief else 50
+        explanation = llm_brief["explanation"] if llm_brief else "No LLM analysis found."
+        reasoning = (llm_brief.get("reasoning") or "") if llm_brief else ""
+        pulse_indicator = get_pulse_indicator(is_anomaly, health_score)
+
+        delta_pct = ((latest_row["close_price"] / df.iloc[0]["close_price"]) - 1.0) * 100.0
+        delta_cls = "kpi-delta-up" if delta_pct >= 0 else "kpi-delta-down"
+        arrow = "▲" if delta_pct >= 0 else "▼"
+        sev_cls = {"CRITICAL": "sev-critical", "HIGH": "sev-high"}.get(severity, "sev-normal")
+
+        # ── Row 1: Market Snapshot + AI / LLM Briefing ──
+        top_cols = st.columns([1, 1.5])
+
+        with top_cols[0]:
+            with st.container(border=True):
+                st.markdown(
+                    f"""
+                    <div class="snap-token">{pulse_indicator}{FULL_NAMES[token]}</div>
+                    <div class="snap-price">${latest_row['close_price']:,.2f}</div>
+                    <div class="{delta_cls}" style="font-size: 15px;">{arrow} {delta_pct:+.2f}% over window</div>
+                    <div class="stat-grid">
+                        <div><div class="stat-label">Volume 5m</div><div class="stat-value">{fmt_compact(latest_row['volume_5m'])}</div></div>
+                        <div><div class="stat-label">CEX Net Flow</div><div class="stat-value">{fmt_usd_signed(latest_row['net_cex_flow_usd'])}</div></div>
+                        <div><div class="stat-label">Sentiment</div><div class="stat-value">{latest_row['sentiment_score']:+.2f}</div></div>
+                        <div><div class="stat-label">Tweets / 5m</div><div class="stat-value">{int(latest_row['tweet_count'])}</div></div>
+                        <div><div class="stat-label">Book Imbalance</div><div class="stat-value">{latest_row['imbalance']:+.2f}</div></div>
+                        <div><div class="stat-label">AE Error (MSE)</div><div class="stat-value">{latest_row['mse_score']:.4f}</div></div>
+                    </div>
+                    <div class="sev-chip {sev_cls}">{severity}</div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        with top_cols[1]:
+            with st.container(border=True):
+                st.markdown(
+                    f"""
+                    <div class="ai-card-title">🧠 AI &amp; LLM Analysis</div>
+                    <div class="ai-card-score {score_css_class(health_score)}">LLM Health Score: {health_score}/100</div>
+                    <div class="ai-reasoning">{reasoning}</div>
+                    <p class="ai-card-explanation">{explanation}</p>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        # ── Row 2: Price + Volume large charts ──
+        chart_row_1 = st.columns(2)
+
+        with chart_row_1[0]:
+            with st.container(border=True):
+                st.markdown(
+                    f'<div class="chart-card-head"><span class="chart-title" style="color: #67e8f9;">Price</span>'
+                    f'<span class="chart-value">${latest_row["close_price"]:,.2f}</span></div>',
+                    unsafe_allow_html=True,
+                )
+                st.altair_chart(
+                    create_glass_chart(df, "close_price", "#22d3ee", "Price", "$,.2f", token, axis_format=",.0f"),
+                    width="stretch",
+                )
+
+        with chart_row_1[1]:
+            with st.container(border=True):
+                st.markdown(
+                    f'<div class="chart-card-head"><span class="chart-title" style="color: #d8b4fe;">Volume (5m)</span>'
+                    f'<span class="chart-value">{fmt_compact(latest_row["volume_5m"])}</span></div>',
+                    unsafe_allow_html=True,
+                )
+                st.altair_chart(
+                    create_glass_chart(df, "volume_5m", "#c084fc", "Volume (5m)", ",.0f", token, axis_format="~s"),
+                    width="stretch",
+                )
+
+        # ── Row 3: CEX Net Flow + Sentiment large charts ──
+        chart_row_2 = st.columns(2)
+
+        with chart_row_2[0]:
+            with st.container(border=True):
+                st.markdown(
+                    f'<div class="chart-card-head"><span class="chart-title" style="color: #6ee7b7;">CEX Net Flow</span>'
+                    f'<span class="chart-value">{fmt_usd_signed(latest_row["net_cex_flow_usd"])}</span></div>',
+                    unsafe_allow_html=True,
+                )
+                st.altair_chart(
+                    create_glass_chart(df, "net_cex_flow_usd", "#34d399", "CEX Net Flow", "$,.0f", token, axis_format="~s"),
+                    width="stretch",
+                )
+
+        with chart_row_2[1]:
+            with st.container(border=True):
+                st.markdown(
+                    f'<div class="chart-card-head"><span class="chart-title" style="color: #fde68a;">Social Sentiment</span>'
+                    f'<span class="chart-value">{latest_row["sentiment_score"]:+.2f}</span></div>',
+                    unsafe_allow_html=True,
+                )
+                st.altair_chart(
+                    create_glass_chart(df, "sentiment_score", "#fbbf24", "Sentiment Score", "+.2f", token, axis_format="+.2f"),
+                    width="stretch",
+                )
 
 st.markdown("<br><br>", unsafe_allow_html=True)
 
