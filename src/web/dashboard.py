@@ -82,13 +82,6 @@ AUDIO_BASE64 = get_base64_audio("src/web/chime.wav")
 # Custom Premium CSS Styling (Aurora mesh background, refined frosted glassmorphism, accent rails)
 st.markdown(
     """
-    <div class="liquid-bg-container">
-        <div class="aurora-mesh"></div>
-        <div class="liquid-blob liquid-blob-1"></div>
-        <div class="liquid-blob liquid-blob-2"></div>
-        <div class="liquid-blob liquid-blob-3"></div>
-        <div class="grain-overlay"></div>
-    </div>
     <style>
         /* Import display + body type pairing */
         @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
@@ -102,113 +95,37 @@ st.markdown(
             --accent-violet: #a78bfa;
         }
 
-        /* ── Aggressive CSS Override to Reveal Aurora Background through Streamlit ── */
-        html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stApp"], [data-testid="stHeader"], .main, .stMain, [data-testid="stMainTemplate"], .block-container, [data-testid="stVerticalBlock"], .element-container, [data-testid="element-container"], div[class*="st-emotion-cache"] {
+        /* ── Aggressive CSS Override to Reveal Background through Streamlit ── */
+        html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stApp"], [data-testid="stHeader"], .main, .stMain, [data-testid="stMainTemplate"], .block-container, [data-testid="stVerticalBlock"], .element-container, [data-testid="element-container"] {
             background-color: transparent !important;
             background: transparent !important;
             font-family: 'Outfit', sans-serif;
             color: #e7ecf5;
         }
 
+        /* Combined high-performance fixed background on html */
+        html {
+            background: 
+                /* 1. Grain overlay */
+                url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+                /* 2. Aurora Cyan blob (top left) */
+                radial-gradient(circle at 15% 10%, rgba(34, 211, 238, 0.15) 0%, rgba(14, 116, 144, 0.05) 30%, transparent 60%),
+                /* 3. Aurora Indigo blob (bottom right) */
+                radial-gradient(circle at 85% 90%, rgba(129, 140, 248, 0.28) 0%, rgba(67, 56, 202, 0.08) 45%, transparent 75%),
+                /* 4. Aurora Rose blob (center-left) */
+                radial-gradient(circle at 45% 45%, rgba(244, 114, 182, 0.22) 0%, rgba(157, 23, 77, 0.06) 45%, transparent 75%),
+                /* 5. Base Deep obsidian-slate gradient */
+                radial-gradient(ellipse at 20% 0%, #07070a 0%, #030305 45%, #010101 100%) !important;
+            
+            background-attachment: fixed !important;
+            background-repeat: repeat, no-repeat, no-repeat, no-repeat, no-repeat !important;
+            background-size: auto, cover, cover, cover, cover !important;
+            background-blend-mode: overlay, normal, normal, normal, normal !important;
+        }
+
         html, body {
             margin: 0;
             padding: 0;
-            background-color: #05070f !important; /* Deep space-navy base fallback */
-        }
-
-        .liquid-bg-container {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            z-index: -1;
-            overflow: hidden;
-            background: radial-gradient(ellipse at 20% 0%, #0b1226 0%, #070a16 45%, #05070f 100%) !important;
-            pointer-events: none;
-        }
-
-        /* ── Slowly drifting conic aurora mesh for depth behind the glass ── */
-        .aurora-mesh {
-            position: absolute;
-            inset: -25%;
-            background:
-                radial-gradient(40% 40% at 30% 30%, rgba(56, 232, 255, 0.18), transparent 60%),
-                radial-gradient(45% 45% at 75% 25%, rgba(167, 139, 250, 0.18), transparent 60%),
-                radial-gradient(50% 50% at 60% 80%, rgba(244, 114, 182, 0.14), transparent 60%);
-            filter: blur(40px);
-            animation: mesh-drift 40s ease-in-out infinite alternate;
-            will-change: transform;
-        }
-
-        @keyframes mesh-drift {
-            0%   { transform: translate3d(-3%, -2%, 0) rotate(0deg) scale(1.05); }
-            100% { transform: translate3d(3%, 2%, 0) rotate(8deg) scale(1.12); }
-        }
-
-        /* ── Fine grain overlay to kill banding and add a tactile, premium finish ── */
-        .grain-overlay {
-            position: absolute;
-            inset: 0;
-            opacity: 0.04;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-            mix-blend-mode: overlay;
-            pointer-events: none;
-        }
-
-        .liquid-blob {
-            position: absolute;
-            border-radius: 50%;
-            filter: blur(150px);
-            opacity: 0.38;
-            mix-blend-mode: screen;
-            pointer-events: none;
-            will-change: transform;
-        }
-
-        .liquid-blob-1 {
-            width: 540px;
-            height: 540px;
-            background: radial-gradient(circle, #22d3ee 0%, #0e7490 42%, rgba(14, 116, 144, 0) 70%); /* Aurora Cyan */
-            top: -15%;
-            left: 8%;
-            animation: float-blob-1 25s ease-in-out infinite alternate;
-        }
-
-        .liquid-blob-2 {
-            width: 470px;
-            height: 470px;
-            background: radial-gradient(circle, #818cf8 0%, #4338ca 42%, rgba(67, 56, 202, 0) 70%); /* Aurora Indigo */
-            bottom: -8%;
-            right: 12%;
-            animation: float-blob-2 28s ease-in-out infinite alternate;
-        }
-
-        .liquid-blob-3 {
-            width: 600px;
-            height: 600px;
-            background: radial-gradient(circle, #f472b6 0%, #9d174d 42%, rgba(157, 23, 77, 0) 70%); /* Aurora Rose */
-            top: 28%;
-            left: 38%;
-            animation: float-blob-3 26s ease-in-out infinite alternate;
-        }
-
-        @keyframes float-blob-1 {
-            0% { transform: translate3d(-40px, -20px, 0) scale(0.95); }
-            50% { transform: translate3d(60px, 40px, 0) scale(1.05); }
-            100% { transform: translate3d(-40px, -20px, 0) scale(0.95); }
-        }
-
-        @keyframes float-blob-2 {
-            0% { transform: translate3d(60px, 30px, 0) scale(1.05); }
-            50% { transform: translate3d(-50px, -45px, 0) scale(0.95); }
-            100% { transform: translate3d(60px, 30px, 0) scale(1.05); }
-        }
-
-        @keyframes float-blob-3 {
-            0% { transform: translate3d(-30px, 40px, 0) scale(0.97); }
-            50% { transform: translate3d(45px, -35px, 0) scale(1.03); }
-            100% { transform: translate3d(-30px, 40px, 0) scale(0.97); }
         }
 
         /* ── Prevent Streamlit's "stale" fade-out during reruns ── */
@@ -219,39 +136,43 @@ st.markdown(
             transition: none !important;
         }
 
-        /* ── Refined Frosted Liquid-Glass Panel (deep blur, crisp hairline stroke, top sheen) ── */
-        div[data-testid="stVerticalBlockBorderDiv"] {
+        /* ── Refined Frosted Glass Panel (dark transparent shade, crisp blended borders) ── */
+        div[class*="st-key-kpi_card_"],
+        div[class*="st-key-snapshot_"],
+        div[class*="st-key-ai_briefing_"],
+        div[class*="st-key-chart_"] {
             position: relative;
-            background: rgba(16, 21, 38, 0.46) !important;
+            background: rgba(8, 8, 12, 0.67) !important; /* Exactly 67% opaque modern obsidian charcoal black */
             background-image:
-                linear-gradient(160deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.015) 38%, rgba(255, 255, 255, 0) 100%) !important;
-            backdrop-filter: blur(28px) saturate(180%) !important;
-            -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
-            border: 1px solid var(--glass-stroke) !important;
+                linear-gradient(160deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 38%, rgba(255, 255, 255, 0) 100%) !important;
+            border: 1px solid rgba(255, 255, 255, 0.05) !important;
             border-radius: 22px !important;
             padding: 18px !important;
             box-shadow:
-                0 16px 40px -8px rgba(0, 0, 0, 0.55),
-                inset 0 1px 0 0 rgba(255, 255, 255, 0.14),
-                inset 0 0 0 1px rgba(255, 255, 255, 0.02) !important;
+                0 16px 40px -8px rgba(0, 0, 0, 0.75),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.05),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.01) !important;
 
             /* High-Performance GPU Hardware Acceleration Overrides */
             transform: translate3d(0, 0, 0) !important;
-            will-change: transform, backdrop-filter !important;
+            will-change: transform !important;
 
             animation: subtle-fade-in 0.4s ease-out !important;
             transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease !important;
         }
 
         /* Subtle top-edge specular highlight that reads as a glass bevel */
-        div[data-testid="stVerticalBlockBorderDiv"]::before {
+        div[class*="st-key-kpi_card_"]::before,
+        div[class*="st-key-snapshot_"]::before,
+        div[class*="st-key-ai_briefing_"]::before,
+        div[class*="st-key-chart_"]::before {
             content: "";
             position: absolute;
             inset: 0 0 auto 0;
             height: 1px;
             border-radius: 22px 22px 0 0;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
-            opacity: 0.5;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.25), transparent);
+            opacity: 0.4;
             pointer-events: none;
         }
 
@@ -261,13 +182,16 @@ st.markdown(
         }
 
         /* ── Smooth aurora border glow & elevation on hover ── */
-        div[data-testid="stVerticalBlockBorderDiv"]:hover {
+        div[class*="st-key-kpi_card_"]:hover,
+        div[class*="st-key-snapshot_"]:hover,
+        div[class*="st-key-ai_briefing_"]:hover,
+        div[class*="st-key-chart_"]:hover {
             border-color: rgba(56, 232, 255, 0.40) !important; /* Aurora Cyan bezel glow */
             transform: translate3d(0, -3px, 0) !important;
             box-shadow:
-                0 28px 56px -10px rgba(0, 0, 0, 0.65),
+                0 28px 56px -10px rgba(0, 0, 0, 0.85),
                 0 0 28px -4px rgba(56, 232, 255, 0.22),
-                inset 0 1px 0 0 rgba(255, 255, 255, 0.22) !important;
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.15) !important;
         }
 
         /* ── Glass pill Tab navigation ── */
@@ -275,35 +199,48 @@ st.markdown(
             gap: 10px;
             background: transparent !important;
             border-bottom: none !important;
-            padding: 6px 0 16px 0;
+            padding: 8px 0 16px 0 !important;
+            overflow: visible !important;
         }
-        .stTabs [data-baseweb="tab"] {
+        .stTabs [data-baseweb="tab"],
+        div[data-testid="stTabBar"] button,
+        button[data-baseweb="tab"] {
             font-family: 'Space Grotesk', sans-serif !important;
             font-weight: 600 !important;
             letter-spacing: 0.5px;
             color: #9fb0c8 !important;
-            background: rgba(255, 255, 255, 0.04) !important;
-            border: 1px solid rgba(255, 255, 255, 0.09) !important;
+            background-color: rgba(8, 8, 12, 0.67) !important; /* Semi-transparent obsidian black matching containers */
+            background: rgba(8, 8, 12, 0.67) !important;
+            border: 1px solid rgba(255, 255, 255, 0.05) !important;
             border-radius: 999px !important;
-            padding: 10px 24px !important;
-            backdrop-filter: blur(12px);
-            transition: all 0.25s ease;
+            padding: 6px 20px !important; /* Reduced vertical padding to prevent cropping */
+            transition: all 0.2s ease-in-out !important;
         }
-        .stTabs [data-baseweb="tab"] p {
+        .stTabs [data-baseweb="tab"] p,
+        div[data-testid="stTabBar"] button p {
             font-size: 15px !important;
             font-family: 'Space Grotesk', sans-serif !important;
         }
-        .stTabs [data-baseweb="tab"]:hover {
+        .stTabs [data-baseweb="tab"]:hover,
+        div[data-testid="stTabBar"] button:hover {
             color: #e7ecf5 !important;
+            background-color: rgba(12, 12, 18, 0.67) !important;
+            background: rgba(12, 12, 18, 0.67) !important;
             border-color: rgba(255, 255, 255, 0.22) !important;
         }
-        .stTabs [aria-selected="true"] {
+        .stTabs [aria-selected="true"],
+        div[data-testid="stTabBar"] button[aria-selected="true"],
+        button[data-baseweb="tab"][aria-selected="true"] {
             color: #38e8ff !important;
-            background: rgba(56, 232, 255, 0.10) !important;
+            background-color: rgba(16, 16, 24, 0.67) !important; /* Semi-transparent dark background for selected tab */
+            background: rgba(16, 16, 24, 0.67) !important;
             border-color: rgba(56, 232, 255, 0.45) !important;
-            box-shadow: 0 0 20px -6px rgba(56, 232, 255, 0.6);
+            box-shadow: 0 0 20px -6px rgba(56, 232, 255, 0.5) !important;
         }
-        .stTabs [aria-selected="true"] p { color: #38e8ff !important; }
+        .stTabs [aria-selected="true"] p,
+        div[data-testid="stTabBar"] button[aria-selected="true"] p {
+            color: #38e8ff !important;
+        }
         .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {
             display: none !important;
         }
@@ -314,8 +251,23 @@ st.markdown(
         }
 
         /* ── Transparent child override inside glass containers ── */
-        div[data-testid="stVerticalBlockBorderDiv"] div {
+        div[class*="st-key-kpi_card_"] div:not(.ai-card-score):not(.sev-chip):not(.indicator-pulse-green):not(.indicator-pulse-red):not(.indicator-pulse-amber),
+        div[class*="st-key-snapshot_"] div:not(.ai-card-score):not(.sev-chip):not(.indicator-pulse-green):not(.indicator-pulse-red):not(.indicator-pulse-amber),
+        div[class*="st-key-ai_briefing_"] div:not(.ai-card-score):not(.sev-chip):not(.indicator-pulse-green):not(.indicator-pulse-red):not(.indicator-pulse-amber),
+        div[class*="st-key-chart_"] div:not(.ai-card-score):not(.sev-chip):not(.indicator-pulse-green):not(.indicator-pulse-red):not(.indicator-pulse-amber) {
+            background: transparent !important;
             background-color: transparent !important;
+        }
+
+        /* ── Disable Streamlit's default grey-out/fade-out during script reruns ── */
+        [data-stale="true"],
+        [data-stale="true"] *,
+        .stElementContainer[data-stale="true"],
+        div[data-stale="true"],
+        div[class*="stale"] {
+            opacity: 1 !important;
+            filter: none !important;
+            transition: none !important;
         }
 
         /* ── KPI Overview Cards ── */
@@ -517,6 +469,7 @@ st.markdown(
 # ── 2. Data Fetchers (Direct Database Integration Failsafe) ──────────
 
 
+@st.cache_data(ttl=15)
 def get_latest_metrics_db(symbol: str) -> pd.DataFrame:
     """Retrieve 24-candle timeseries data with complete joints from TimescaleDB."""
     if not HAS_DB:
@@ -592,6 +545,7 @@ def get_latest_metrics_db(symbol: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=15)
 def get_latest_health_score_db(symbol: str) -> dict | None:
     """Retrieve latest LLM decision health score for a target symbol."""
     if not HAS_DB:
@@ -944,7 +898,7 @@ with title_cols[0]:
     st.markdown(
         """
         <div style='text-align: left; margin-bottom: 32px;'>
-            <h1 style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 44px; letter-spacing: 1px; background: linear-gradient(92deg, #ffffff 0%, #a5f3fc 45%, #c4b5fd 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; text-shadow: 0 0 28px rgba(56, 232, 255, 0.18); margin-bottom: 0px;">CRYPTO ANALYTICS DASHBOARD</h1>
+            <h1 style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 44px; letter-spacing: 1px; background: linear-gradient(92deg, #ffffff 0%, #a5f3fc 45%, #c4b5fd 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; text-shadow: 0 0 28px rgba(56, 232, 255, 0.18); margin-bottom: 0px;">CRYPTOSENSE ANALYTICS DASHBOARD</h1>
             <p style='color: #8fa0b5; font-size: 14px; margin-top: 6px; letter-spacing: 2px; text-transform: uppercase;'>Real-time Token Analysis &nbsp;·&nbsp; LLM Insights</p>
         </div>
         """,
@@ -1039,6 +993,7 @@ def create_glass_chart(df, y_column, line_color, value_title, value_format, toke
     ).add_params(hover_selection)
 
     chart = alt.layer(area, line, points).properties(
+        width="container",
         height=height,
         usermeta={"embedOptions": {"actions": False}},
     ).configure_view(strokeWidth=0).configure(background="transparent")
@@ -1156,13 +1111,13 @@ for tk_idx, tk in enumerate(TRACKED_TOKENS):
     arrow = "▲" if delta_pct >= 0 else "▼"
 
     with kpi_cols[tk_idx]:
-        with st.container(border=True):
+        with st.container(border=True, key=f"kpi_card_{tk.lower()}"):
             st.markdown(
                 f"""
                 <div class="kpi-token">{pulse_k}{tk}</div>
                 <div class="kpi-price">${last_k['close_price']:,.2f}</div>
                 <div class="{delta_cls}">{arrow} {delta_pct:+.2f}% / 2h</div>
-                <div class="ai-card-score {score_css_class(score_k)}" style="margin-bottom: 0;">AI {score_k}/100</div>
+                <div class="ai-card-score {score_css_class(score_k)}" style="margin-bottom: 12px;">{score_k}/100</div>
                 """,
                 unsafe_allow_html=True,
             )
@@ -1194,7 +1149,7 @@ for tab, token in zip(tab_objs, TRACKED_TOKENS):
         top_cols = st.columns([1, 1.5])
 
         with top_cols[0]:
-            with st.container(border=True):
+            with st.container(border=True, key=f"snapshot_{token.lower()}"):
                 st.markdown(
                     f"""
                     <div class="snap-token">{pulse_indicator}{FULL_NAMES[token]}</div>
@@ -1214,7 +1169,7 @@ for tab, token in zip(tab_objs, TRACKED_TOKENS):
                 )
 
         with top_cols[1]:
-            with st.container(border=True):
+            with st.container(border=True, key=f"ai_briefing_{token.lower()}"):
                 st.markdown(
                     f"""
                     <div class="ai-card-title">🧠 AI &amp; LLM Analysis</div>
@@ -1229,7 +1184,7 @@ for tab, token in zip(tab_objs, TRACKED_TOKENS):
         chart_row_1 = st.columns(2)
 
         with chart_row_1[0]:
-            with st.container(border=True):
+            with st.container(border=True, key=f"chart_price_{token.lower()}"):
                 st.markdown(
                     f'<div class="chart-card-head"><span class="chart-title" style="color: #67e8f9;">Price</span>'
                     f'<span class="chart-value">${latest_row["close_price"]:,.2f}</span></div>',
@@ -1241,7 +1196,7 @@ for tab, token in zip(tab_objs, TRACKED_TOKENS):
                 )
 
         with chart_row_1[1]:
-            with st.container(border=True):
+            with st.container(border=True, key=f"chart_volume_{token.lower()}"):
                 st.markdown(
                     f'<div class="chart-card-head"><span class="chart-title" style="color: #d8b4fe;">Volume (5m)</span>'
                     f'<span class="chart-value">{fmt_compact(latest_row["volume_5m"])}</span></div>',
@@ -1256,7 +1211,7 @@ for tab, token in zip(tab_objs, TRACKED_TOKENS):
         chart_row_2 = st.columns(2)
 
         with chart_row_2[0]:
-            with st.container(border=True):
+            with st.container(border=True, key=f"chart_cex_{token.lower()}"):
                 st.markdown(
                     f'<div class="chart-card-head"><span class="chart-title" style="color: #6ee7b7;">CEX Net Flow</span>'
                     f'<span class="chart-value">{fmt_usd_signed(latest_row["net_cex_flow_usd"])}</span></div>',
@@ -1268,7 +1223,7 @@ for tab, token in zip(tab_objs, TRACKED_TOKENS):
                 )
 
         with chart_row_2[1]:
-            with st.container(border=True):
+            with st.container(border=True, key=f"chart_sentiment_{token.lower()}"):
                 st.markdown(
                     f'<div class="chart-card-head"><span class="chart-title" style="color: #fde68a;">Social Sentiment</span>'
                     f'<span class="chart-value">{latest_row["sentiment_score"]:+.2f}</span></div>',
